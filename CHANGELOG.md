@@ -27,5 +27,12 @@ notice.
 
 ### Security
 
-- Overlapping email addresses such as `0@0.AA@0.AA` made `Redact` panic; found by fuzzing during
-  development and fixed before any release.
+Found during development and fixed before any release:
+
+- Overlapping email addresses such as `0@0.AA@0.AA` made `Redact` panic (found by fuzzing).
+- A zero `Redactor` (not created with `New`) detected nothing; it now behaves like `New()`.
+- Addresses followed by glued text (`ana@example.com-thanks`, `ana@example.com.2`) or long punctuation
+  were not redacted, and `sant'anna@…` or decomposed accents were redacted only in part.
+- Sessions kept whole inputs in memory through substrings of stored values; they now store copies.
+- `CPF nº123.456.789-09` was not detected; lowercase URL path segments shaped like a CNPJ without dots
+  were redacted under the default policy.

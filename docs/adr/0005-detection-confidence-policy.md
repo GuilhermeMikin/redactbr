@@ -13,15 +13,18 @@ strong evidence: `123.456.789-09` with valid check digits is very unlikely to be
 ## Decision
 
 1. **Shapes are explicit** (spec §5). Formatted: the canonical masks, plus the CNPJ variant without dots
-   (`XXXXXXXX/XXXX-DD`), which keeps the CNPJ-specific separators and appears in the Receita Federal FAQ.
+   (`XXXXXXXX/XXXX-DD`), which keeps the CNPJ-specific separators and appears in the Receita Federal FAQ —
+   unless it has lowercase letters, which makes it look like a URL path segment.
    Unformatted: digits only, plus the CPF variant `DDDDDDDDD-DD`, whose lone hyphen is a generic
    check-digit separator. Other punctuation patterns are not candidates.
-2. **Boundaries** (spec §6): no letter or digit of any script next to a candidate, and no `.` that would
-   make it part of a decimal or dotted number.
+2. **Boundaries** (spec §6): no letter, digit or combining mark of any script next to a candidate (the
+   ordinal indicators `ª`/`º` excepted), and no `.` that would make it part of a decimal or dotted number,
+   unless that `.` follows a detected value.
 3. **Validity:** official check digits; the all-zero number rejected; repeated digits otherwise accepted.
 4. **Policy:**
    - `Balanced` (default): formatted and valid → redact. Unformatted and valid → redact only if the
-     entity's keyword (`cpf`, `cnpj`; any case; substring) lies within the 32 bytes before the value.
+     entity's keyword (`cpf`, `cnpj`; any case; substring; dots allowed, as in `C.P.F.`) lies within the
+     32 bytes before the value.
    - `Strict`: every valid candidate with clean boundaries → redact.
 5. **No hidden scoring.** There is no numeric confidence score in v0.1; the rules above are the whole
    policy, and `Match` does not expose a score.

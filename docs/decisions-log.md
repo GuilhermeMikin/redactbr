@@ -125,8 +125,10 @@ Dates are when the decision was recorded. "Accessed" dates are when a source was
 ### D-017 Streaming API shape
 
 - `Session.RestoreWriter(io.Writer) *RestoreWriter` with `Write`/`Close`, following `base64.NewEncoder`
-  and `gzip.Writer`: it fits both push-style SDK streams (write each delta) and `io.Copy` from a response
-  body. No `io.Reader` variant until there is demand.
+  and `gzip.Writer`: it fits push-style SDK streams (write each text delta) and `io.Copy` of plain text.
+  It must be fed decoded text, not a raw SSE or JSON body (framing between token halves; JSON escaping of
+  `<` and `>`, which Go's `encoding/json` does by default — checked on 2026-10-30). No `io.Reader` variant
+  until there is demand.
 
 ### D-018 Email scope
 
@@ -161,3 +163,28 @@ Dates are when the decision was recorded. "Accessed" dates are when a source was
   validator tests and in two detection tests (FAQ examples), cited.
 - A fuzzing regression input (`testdata/fuzz/FuzzRedact/…`, the string `0@0.AA@0.AA`) is committed: it
   made overlapping email matches panic in `Redact` before the fix.
+
+### D-024 Independent review before the first push
+
+An independent review (a separate agent, read-only, with reproductions) ran before the first push. Changes:
+
+- **Zero `Redactor`**: it detected nothing, which contradicted the fail-closed rule. Fields now record
+  disabled entities and a zero capacity means the default, so a zero `Redactor` behaves like `New()`.
+- **Email**: the domain scan was all-or-nothing, so `ana@example.com-thanks`, `ana@example.com.2` and
+  addresses followed by long punctuation were missed, and the `FuzzRedact` Strict invariant could fail in
+  CI. Now the longest valid domain prefix wins and limits apply after trimming; `xn--` in any case;
+  apostrophes and combining marks in local parts. Other RFC 5322 `atext` characters stay excluded (they
+  pull URL text into matches).
+- **Memory**: stored values and reservations were substrings that kept whole inputs alive; now copies.
+- **Boundaries**: `ª`/`º` are boundaries (`nº123.456.789-09`); combining marks continue words; a `.` right
+  after a detected value is a separator, which also fixed a second Strict-invariant failure found while
+  fuzzing the fixes (`12345678909.A0000000500000`). Values glued to an ASCII word (`CPF123.456.789-09`)
+  stay undetected; documented.
+- **Policy**: the CNPJ shape without dots counts as formatted only without lowercase letters (URL path
+  segments such as `20261030/main-12` were redacted under Balanced). Keywords may contain dots (`C.P.F.`).
+- **Tests**: `FuzzSessionRoundTrip` now uses a low-entropy random source, so removing the reservation makes
+  it fail (checked by mutation); new regression seeds; CI prints new fuzz failures; benchmark comments
+  corrected and a numbers-heavy benchmark added; `RestoreWriter` formats safely by value and clears its
+  reusable output buffer.
+- **Docs**: the spec, README, doc.go and CLAUDE.md were corrected where they promised more than the code
+  (oracle coverage, "always" for formatted values, SSE bodies, one-pass wording).

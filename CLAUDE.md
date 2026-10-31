@@ -68,8 +68,8 @@ releases.
 - Official reference vectors (published by Receita Federal in its documentation and reference code) may be
   used in validator tests, with the source cited next to them.
 - **No PII in errors, logs, panic messages, benchmark names or debug output.** Errors name the entity, a
-  category and, when safe, a byte offset — never the value. Test failure messages should not print
-  detected values; print entities and offsets instead.
+  category and, when safe, a byte offset — never the value. Library code never prints values; tests use
+  only generated fixtures and official vectors, so their failure messages may show those.
 - No real PII in tests, examples, issues, pull request descriptions or commit messages.
 
 ### Security semantics
@@ -85,7 +85,8 @@ releases.
   session issued it never gains restoration authority; unknown, modified or foreign tokens are left
   verbatim; sessions never restore each other's tokens; randomness comes from `crypto/rand`.
 - **Bounded work:** scanning is linear in the input; streaming restoration buffers at most one token's
-  length; sessions have a capacity limit.
+  length; sessions have a capacity limit and store copies (`strings.Clone`), never substrings that would
+  keep whole inputs alive.
 - **Concurrency:** `Redactor` and `Session` are safe for concurrent use; `RestoreWriter` is not (one per
   stream). Every change touching shared state must pass `go test -race ./...`.
 

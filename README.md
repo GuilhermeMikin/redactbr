@@ -61,9 +61,9 @@ across chunks). `go run ./examples/llm-stream` needs no API key and no network.
 
 | Entity | Recognized forms | Validation | Redacted under the default policy |
 |---|---|---|---|
-| CPF | `123.456.789-09`, `123456789-09`, `12345678909` | Official check digits | Formatted: always. Unformatted: only after the keyword `cpf` |
-| CNPJ (numeric) | `11.223.344/5566-13`, `11223344/5566-13`, `11223344556613` | Official check digits | Formatted: always. Unformatted: only after the keyword `cnpj` |
-| CNPJ (alphanumeric) | `AB.12C.D34/EF56-02`, `AB12CD34/EF56-02`, `AB12CD34EF5602`, either case | Official check digits (IN RFB 2.229/2024) | Same as numeric |
+| CPF | `123.456.789-09`, `123456789-09`, `12345678909` | Official check digits | Formatted: yes. Unformatted: only after the keyword `cpf` |
+| CNPJ (numeric) | `11.223.344/5566-13`, `11223344/5566-13`, `11223344556613` | Official check digits | Formatted: yes. Unformatted: only after the keyword `cnpj` |
+| CNPJ (alphanumeric) | `AB.12C.D34/EF56-02`, `AB12CD34/EF56-02`, `AB12CD34EF5602`, either case | Official check digits (IN RFB 2.229/2024) | Same as numeric; `ab12cd34/ef56-02` (lowercase, no dots) counts as unformatted |
 | Email | `ana.silva@example.com` (pragmatic RFC 5322 subset) | Structure | Always |
 
 All values in this README are generated test values.
@@ -82,10 +82,12 @@ A valid check digit alone is weak evidence: one in a hundred arbitrary 11-digit 
 check digits, and LLM and agent traffic is full of order numbers, ids and timestamps. So:
 
 - **Formatted** values (`123.456.789-09`, `11.223.344/5566-13`) are redacted whenever their check digits
-  are valid.
+  are valid and they are not glued to letters or digits (`CPF123.456.789-09` is not detected;
+  `CPF nº123.456.789-09` is).
 - **Unformatted** values (`12345678909`) are redacted under the default `Balanced` policy **only when the
   entity's keyword appears in the 32 bytes before them** (`CPF:`, `cpf=`, `"customerCpf":`, `CPF/CNPJ`, in
-  any case). A bare unformatted value without a nearby keyword is **not** redacted by default.
+  any case, also `C.P.F.`). A bare unformatted value without a nearby keyword is **not** redacted by
+  default.
 - `Strict` redacts every value with valid check digits, formatted or not, and accepts the false positives
   that come with it:
 
@@ -124,6 +126,9 @@ user ◄──RestoreWriter (chunk by chunk)── streamed answer ◄┘
   the same token across turns, which keeps prompts stable.
 - Send **all** model-bound text through `Session.Redact`, including history and tool results.
 - Handle errors by sending nothing: `Session.Redact` returns an empty string on error, never the input.
+- Restore **decoded text**: write the model's text deltas to `RestoreWriter`, not the raw SSE or JSON body.
+  A token split across events has framing between its halves, and JSON encoders may escape `<` and `>`
+  (Go's `encoding/json` does by default), which hides the token.
 - A model may mangle a token (change its case, drop a character). Mangled tokens are left as they are —
   the user sees the broken token, never a wrong value. Consider telling the model, in the system prompt,
   to copy placeholders such as `<CPF_k7q2xm9pb3>` exactly.
@@ -140,12 +145,13 @@ injection in general, or a compromised process. The full threat model is in the
 Guarantees you can rely on (each covered by tests, fuzzing or both):
 
 - **Fail closed.** Operations that can fail return an error and an empty result, never the unredacted
-  input. A configuration that would detect nothing is rejected.
+  input. A configuration that would detect nothing is rejected, and a zero `Redactor` detects everything.
 - **Restoration authority.** A session restores only tokens it issued. Tokens from other sessions, forged
   or modified tokens, and token-like text that reached the session as input before it issued that token
   are left verbatim. Ids are 50 random bits from `crypto/rand`.
-- **Bounded work.** Detection is a single linear pass; streaming restoration holds at most 17 bytes;
-  sessions have a capacity (`WithMaxSessionValues`, default 10,000).
+- **Bounded work.** Detection is linear in the input; streaming restoration holds at most 17 bytes;
+  sessions have a capacity (`WithMaxSessionValues`, default 10,000) and store copies of values, never the
+  inputs they came from.
 - **No values in diagnostics.** Errors, `Match`, `Session` and `RestoreWriter` print entities, offsets and
   counts, never values.
 - **Concurrency.** `Redactor` and `Session` are safe for concurrent use (tested with `-race`); a
@@ -160,7 +166,8 @@ RedactBR can support LGPD data-minimization measures; using it does not make a s
 
 - Unformatted values without a nearby keyword are not redacted under the default policy (see above).
 - Not recognized: digits separated by spaces or partial punctuation (`123 456 789 09`, `123.456789-09`),
-  full-width digits, values with invisible characters inside, numbers in words.
+  values glued to a word (`CPF123.456.789-09`), full-width digits, values with invisible characters
+  inside, numbers in words.
 - Email: no quoted local parts, IP literals or single-label domains. Typed or tokenized, an email loses
   its domain too.
 - Only CPF, CNPJ and email. Other Brazilian identifiers (CNH, PIS, CNS, título de eleitor, phone numbers,
@@ -181,8 +188,8 @@ RedactBR can support LGPD data-minimization measures; using it does not make a s
   collide with user text and across sessions ([ADR-0004](docs/adr/0004-reversible-token-session-safety.md)).
 - **A hand-written linear scanner** instead of regular expressions, checked against a regexp-based oracle
   and fuzz targets.
-- **`io.Writer` for streaming,** like `encoding/base64` and `compress/gzip`, so it works with SDK streams and
-  `io.Copy` alike.
+- **`io.Writer` for streaming,** like `encoding/base64` and `compress/gzip`, so it fits SDK streams that
+  deliver text deltas as well as `io.Copy` of plain text.
 - **Apache-2.0 with DCO, no CLA; the open-source core stays open source**
   ([ADR-0001](docs/adr/0001-apache-2.0-and-dco.md)).
 
