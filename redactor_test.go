@@ -148,7 +148,7 @@ func TestRedactEmail(t *testing.T) {
 		{"hyphenated text glued after", "Contact ana@example.com-thanks", "Contact <EMAIL>-thanks", ""},
 		{"number glued after", "session:ana@example.com-1730303030", "session:<EMAIL>-1730303030", ""},
 		{"dot and digit glued after", "ana@example.com.2", "<EMAIL>.2", ""},
-		{"hyphenated domain", "ana@my-company.com.br", "<EMAIL>", ""},
+		{"hyphenated domain", "ana@my-company.example.com", "<EMAIL>", ""},
 		{"long trailing punctuation", "ana@example.com" + strings.Repeat(".", 260), "<EMAIL>" + strings.Repeat(".", 260), ""},
 		{"long trailing hyphens", "ana@example.com" + strings.Repeat("-", 260), "<EMAIL>" + strings.Repeat("-", 260), ""},
 		{"long leading punctuation", strings.Repeat(".", 70) + "ana@example.com", strings.Repeat(".", 70) + "<EMAIL>", ""},
