@@ -1,0 +1,29 @@
+# Build and test output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+*.prof
+*.pprof
+
+# Local Go workspace files (contributors may use them; never commit them)
+go.work
+go.work.sum
+
+# Secrets and environment files
+.env
+.env.*
+*.pem
+*.key
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# AI coding assistants (machine-specific or private)
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/worktrees/
