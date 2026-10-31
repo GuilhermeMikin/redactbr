@@ -52,3 +52,112 @@ Dates are when the decision was recorded. "Accessed" dates are when a source was
   2026-10-30): actions/checkout v7.0.1 `3d3c42e5aac5ba805825da76410c181273ba90b1`, actions/setup-go v7.0.0
   `b7ad1dad31e06c5925ef5d2fc7ad053ef454303e`, golangci/golangci-lint-action v9.3.0
   `ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a`. Dependabot keeps them current.
+
+### D-006 Validators stay internal in v0.1
+
+- `internal/cpf` and `internal/cnpj` are not exported, to keep the public surface small while the API is
+  pre-alpha. Exporting them later (for example as `redactbr/brdoc`) is backwards compatible; open question
+  for the review, since an alphanumeric CNPJ validator has standalone value.
+
+### D-007 CPF source
+
+- No normative publication of the CPF check-digit algorithm was located. The implementation matches the
+  routine `TestaCPF` on the Receita Federal's public CPF status page (spec §3.1), which is an official
+  implementation. Recorded as "pending official source" for the normative text.
+
+### D-008 CNPJ sources and an error in the official FAQ
+
+- Algorithm, vectors and format from the Receita Federal DV manual, its reference routines
+  (`codigos-cnpj.zip`) and the FAQ (spec §3.2). The manual is byte-for-byte identical to the Serpro PDF.
+- FAQ question 23, example 1 (`AA345678/0003-29`) does not satisfy the algorithm (it yields `86`). We
+  follow the algorithm and keep the example as a negative vector (spec §3.3).
+- The IN RFB 2.229/2024 text could not be rendered (JavaScript-only portal); dates come from the Receita
+  Federal project page (published 2024-10-15, in force 2024-10-25, assignments from July 2026).
+
+### D-009 Repeated digits
+
+- Only the all-zero CPF and CNPJ are rejected, matching the official routines. `111.111.111-11` and similar
+  are valid candidates and are redacted. Many third-party validators reject repeated digits by convention;
+  no official rule was found, and redacting a placeholder is cheap. Reversible.
+
+### D-010 Lowercase alphanumeric CNPJ in detection
+
+- The official format and validator use uppercase letters. Detection folds case before validation in every
+  shape (spec §8.1), accepting more false positives under Strict for lowercase codes. Reversible; flagged
+  for review.
+
+### D-011 Recognized shapes
+
+- Formatted: `DDD.DDD.DDD-DD`; `XX.XXX.XXX/XXXX-DD`; `XXXXXXXX/XXXX-DD` (used in the official FAQ).
+  Unformatted: digits only; `DDDDDDDDD-DD` (a lone check-digit hyphen is common to many identifiers).
+  Partial or alternative punctuation is not a candidate. Spec §5.
+
+### D-012 Boundaries
+
+- Letters and digits of any script block a candidate; `_`, `-`, `/` and `,` do not. A `.` next to an ASCII
+  digit blocks it (decimals and dotted numbers). The comma stays a boundary so CSV columns remain
+  detectable. Spec §6.
+
+### D-013 Context keyword window
+
+- Under Balanced, unformatted values need `cpf`/`cnpj` (ASCII case-insensitive substring) entirely within
+  the 32 bytes before the value. Before-only and fixed size for v0.1; making it configurable or adding an
+  after-window is an open question. ADR-0005.
+
+### D-014 Token design
+
+- `<ENTITY_id>` with a 10-character lowercase Crockford base32 id (50 bits from `crypto/rand`) per value;
+  no counter and no session tag; reservation of look-alikes seen in input; byte-for-byte matching.
+  Alternatives and reasoning in ADR-0004. 10 characters rather than 8: under generous assumptions (10^6
+  guesses, 10^3 tokens) guessing stays below 10^-6, at a small cost in length.
+
+### D-015 Session capacity
+
+- Default 10,000 entries (distinct values plus reservations) per session, configurable with
+  `WithMaxSessionValues`. Bounds memory per conversation; exceeding it fails closed (`ErrSessionFull`).
+  Token-like input consumes capacity; accepted because sessions are per conversation (spec §12.5).
+
+### D-016 Session keys and restored form
+
+- CPF/CNPJ keys drop separators and fold case; email keys lowercase only the domain (local parts are
+  case-sensitive). Restoration returns the form first seen in the session.
+
+### D-017 Streaming API shape
+
+- `Session.RestoreWriter(io.Writer) *RestoreWriter` with `Write`/`Close`, following `base64.NewEncoder`
+  and `gzip.Writer`: it fits both push-style SDK streams (write each delta) and `io.Copy` from a response
+  body. No `io.Reader` variant until there is demand.
+
+### D-018 Email scope
+
+- Pragmatic subset of RFC 5322 addr-spec with RFC 5321 length limits (spec §10); no quoted local parts or
+  IP literals. Default enabled.
+
+### D-019 slog deferred
+
+- The `slog.Handler` was the first item on the cut list. It is deferred to keep this session's effort on
+  the core guarantees; it goes into v0.3 integrations ("observability, slog first").
+
+### D-020 Name check
+
+- No conflict found for `redactbr` on GitHub, pkg.go.dev, proxy.golang.org, PyPI, npm or a web search
+  (2026-10-30; details in `docs/prior-art.md`). Trademark registries were not searched.
+
+### D-021 Formatting without contents
+
+- `Session` and `RestoreWriter` implement `String`/`GoString` with counts only; the writer's reusable
+  output buffer holds restored values, and `%+v` would otherwise print it. Inspired by obscura's vault.
+
+### D-022 Scanner pre-filter
+
+- Identifier shapes are only tried on runs of ASCII letters and digits whose length and next separator can
+  start a shape (2/3 + `.`, 8 + `/`, 9 + `-`, or exactly 11 or 14). About 5x faster on text without
+  personal data on the development machine; equivalence checked against the regexp oracle and fuzzing.
+
+### D-023 Fixtures and examples
+
+- Tests, examples and the README use generated values (`123.456.789-09`, `11.223.344/5566-13`,
+  `AB.12C.D34/EF56-02`, `ana.silva@example.com`). Official vectors from the Receita Federal appear only in
+  validator tests and in two detection tests (FAQ examples), cited.
+- A fuzzing regression input (`testdata/fuzz/FuzzRedact/…`, the string `0@0.AA@0.AA`) is committed: it
+  made overlapping email matches panic in `Redact` before the fix.
