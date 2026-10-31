@@ -1,0 +1,38 @@
+name: Detector proposal
+description: Propose a new identifier, or a new recognized form of an existing one.
+labels: ["detector"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Detectors need an **official source** for their format and check digits (Receita Federal, Serpro,
+        TSE, CNJ, Ministério da Saúde, Banco Central, a standard). Please do not paste real identifiers;
+        use the examples published by the official source, or generated values.
+  - type: input
+    id: identifier
+    attributes:
+      label: Identifier
+      placeholder: "CNH, PIS/NIS, CNS, título de eleitor, CNJ process number, …"
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Official source
+      description: URLs of the official definition of the format and of the check-digit algorithm, and any published test vectors.
+    validations:
+      required: true
+  - type: textarea
+    id: forms
+    attributes:
+      label: Formatted and unformatted forms
+      description: How the identifier is written with and without punctuation, and its length.
+    validations:
+      required: true
+  - type: textarea
+    id: false-positives
+    attributes:
+      label: Expected false positives
+      description: What else looks like it (other identifiers of the same length, ids, phone numbers…), and what context would tell them apart.
+    validations:
+      required: true

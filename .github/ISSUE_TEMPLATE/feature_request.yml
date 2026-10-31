@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest an improvement that is not a new detector.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How you would solve it, and what it changes in the API or the guarantees.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: >-
+            I read "Keep the scope" in
+            [CONTRIBUTING.md](https://github.com/GuilhermeMikin/redactbr/blob/main/CONTRIBUTING.md#before-you-start):
+            this fits a small library with strong guarantees.
+          required: true

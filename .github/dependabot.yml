@@ -1,0 +1,23 @@
+# Keeps the GitHub Actions used by .github/workflows current, and watches go.mod (the module has no
+# dependencies today; this catches any that are added). One grouped pull request a month per ecosystem.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      go-modules:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
