@@ -132,7 +132,7 @@ func tsReference(s string) bool {
 	}
 	for i := range BaseLen {
 		c := s[i]
-		if !('0' <= c && c <= '9') && !('A' <= c && c <= 'Z') {
+		if isBase := ('0' <= c && c <= '9') || ('A' <= c && c <= 'Z'); !isBase {
 			return false
 		}
 	}

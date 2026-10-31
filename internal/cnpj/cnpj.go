@@ -59,12 +59,14 @@ func CheckDigits(base [BaseLen]byte) (dv1, dv2 byte, ok bool) {
 	}
 	d1 := checkDigit(sum1)
 	d2 := checkDigit(sum2 + d1*2)
-	return byte('0' + d1), byte('0' + d2), true
+	return asciiDigits[d1], asciiDigits[d2], true
 }
 
 func isBaseChar(c byte) bool {
 	return ('0' <= c && c <= '9') || ('A' <= c && c <= 'Z')
 }
+
+const asciiDigits = "0123456789"
 
 func checkDigit(sum int) int {
 	if r := sum % 11; r >= 2 {
