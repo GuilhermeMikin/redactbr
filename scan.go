@@ -44,7 +44,11 @@ func (r *Redactor) findIdentifiers(s string, ms []Match) []Match {
 			i++
 			continue
 		}
-		if leftBoundary(s, i) {
+		j := i + 1
+		for j < len(s) && isASCIIAlnum(s[j]) {
+			j++
+		}
+		if mayStartIdentifier(s, i, j) && leftBoundary(s, i) {
 			if m, ok := r.identifierAt(s, i); ok {
 				ms = append(ms, m)
 				i = m.End
@@ -53,11 +57,30 @@ func (r *Redactor) findIdentifiers(s string, ms []Match) []Match {
 		}
 		// No candidate can start inside a run of letters and digits: its left neighbor would not be a
 		// boundary.
-		for i < len(s) && isASCIIAlnum(s[i]) {
-			i++
-		}
+		i = j
 	}
 	return ms
+}
+
+// mayStartIdentifier is a cheap filter on the run of ASCII letters and digits s[i:j]: every recognized
+// shape starts with a run of exactly 2 or 3 characters followed by '.', 8 followed by '/', 9 followed by
+// '-', or is a run of exactly 11 or 14 characters.
+func mayStartIdentifier(s string, i, j int) bool {
+	var sep byte
+	if j < len(s) {
+		sep = s[j]
+	}
+	switch j - i {
+	case 11, 14:
+		return true
+	case 2, 3:
+		return sep == '.'
+	case 8:
+		return sep == '/'
+	case 9:
+		return sep == '-'
+	}
+	return false
 }
 
 // identifierAt reports the CNPJ or CPF that starts at s[i], if any, applying shape, boundary, check-digit

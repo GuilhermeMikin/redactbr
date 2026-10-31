@@ -21,9 +21,11 @@ const (
 func findEmails(s string, ms []Match) []Match {
 	floor := 0 // a local part may not reach back into the previous address ("a@b.co@c.co")
 	for i := 0; i < len(s); i++ {
-		if s[i] != '@' {
-			continue
+		j := strings.IndexByte(s[i:], '@')
+		if j < 0 {
+			break
 		}
+		i += j
 		start, ok := localStart(s, floor, i)
 		if !ok {
 			continue
