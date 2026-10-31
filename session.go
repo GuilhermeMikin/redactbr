@@ -81,7 +81,7 @@ func (s *Session) Redact(text string) (string, error) {
 	for _, lit := range literals {
 		if _, issued := s.values[lit]; !issued {
 			if _, ok := s.reserved[lit]; !ok {
-				newReserved[lit] = struct{}{}
+				newReserved[strings.Clone(lit)] = struct{}{}
 			}
 		}
 	}
@@ -102,9 +102,10 @@ func (s *Session) Redact(text string) (string, error) {
 			continue
 		}
 		pending[k] = ""
-		fresh = append(fresh, newValue{k, text[m.Start:m.End]})
+		// Clone: a substring would keep the whole input, and any undetected data in it, alive.
+		fresh = append(fresh, newValue{k, strings.Clone(text[m.Start:m.End])})
 	}
-	if len(s.values)+len(s.reserved)+len(newReserved)+len(fresh) > s.r.maxValues {
+	if len(s.values)+len(s.reserved)+len(newReserved)+len(fresh) > s.r.capacity() {
 		return "", ErrSessionFull
 	}
 

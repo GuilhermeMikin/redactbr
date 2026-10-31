@@ -75,19 +75,22 @@ func (rw *RestoreWriter) flush() error {
 	if len(rw.out) == 0 {
 		return nil
 	}
-	if _, err := rw.w.Write(rw.out); err != nil {
+	_, err := rw.w.Write(rw.out)
+	clear(rw.out) // the buffer is reused; do not keep restored values in it
+	if err != nil {
 		rw.err = err
 		return err
 	}
 	return nil
 }
 
-// String describes the writer without revealing buffered text, which may hold restored values.
-func (rw *RestoreWriter) String() string {
+// String describes the writer without revealing buffered text. It has a value receiver so that
+// formatting a dereferenced writer is safe too.
+func (rw RestoreWriter) String() string {
 	return fmt.Sprintf("redactbr.RestoreWriter{held: %d, closed: %t}", rw.held, rw.closed)
 }
 
 // GoString is like String.
-func (rw *RestoreWriter) GoString() string {
+func (rw RestoreWriter) GoString() string {
 	return rw.String()
 }

@@ -175,10 +175,13 @@ func TestRestoreWriterStringHidesContents(t *testing.T) {
 	if _, err := w.Write([]byte("<CPF_k7q2xm9pb3> <CPF_k7q2")); err != nil {
 		t.Fatal(err)
 	}
-	for _, got := range []string{fmt.Sprint(w), fmt.Sprintf("%+v", w), fmt.Sprintf("%#v", w)} {
+	for _, got := range []string{fmt.Sprint(w), fmt.Sprintf("%+v", w), fmt.Sprintf("%#v", w), fmt.Sprintf("%+v", *w)} {
 		if strings.Contains(got, "123") || strings.Contains(got, "k7q2") {
 			t.Error("formatting a RestoreWriter revealed buffered text")
 		}
+	}
+	if strings.Contains(string(w.out[:cap(w.out)]), "123.456.789-09") {
+		t.Error("the reusable output buffer still holds a restored value")
 	}
 }
 
@@ -204,20 +207,23 @@ func FuzzRestoreWriter(f *testing.F) {
 
 // FuzzSessionRoundTrip checks the session invariants on arbitrary input: restoring the redacted text
 // gives back the input (with each value in the form first seen), another session restores nothing, and
-// token-like text from the input never becomes restorable.
+// token-like text from the input never becomes restorable. The random source cycles through four ids, so
+// issued ids collide with look-alikes in the input often and the reservation logic is exercised.
 func FuzzSessionRoundTrip(f *testing.F) {
 	for _, s := range []string{
 		"CPF 123.456.789-09 / cpf 12345678909 / ana@example.com / ANA@EXAMPLE.COM",
-		"<CPF_aaaaaaaaaa> and 123.456.789-09", "cnpj ab12cd34ef5602 AB.12C.D34/EF56-02", "<EMAIL_0000000000>",
+		"<CPF_aaaaaaaaaa> and 123.456.789-09", "<CPF_bbbbbbbbbb> 987.654.321-00 <CPF_aaaaaaaaaa>",
+		"cnpj ab12cd34ef5602 AB.12C.D34/EF56-02", "<EMAIL_aaaaaaaaaa> ana@example.com",
 	} {
 		f.Add(s)
 	}
 	r := newTestRedactor(f)
 	f.Fuzz(func(t *testing.T, in string) {
 		s := r.NewSession()
+		s.fill = lowEntropySource()
 		out, err := s.Redact(in)
-		if errors.Is(err, ErrSessionFull) {
-			t.Skip("input larger than the default capacity")
+		if errors.Is(err, ErrSessionFull) || errors.Is(err, errTokenCollision) {
+			t.Skip("input larger than the capacity or than the four test ids")
 		}
 		if err != nil {
 			t.Fatal(err)

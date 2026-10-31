@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unsafe"
 )
 
 // Fixtures are generated (see redactor_test.go); none was collected.
@@ -27,6 +28,21 @@ func idSource(ids ...string) func([]byte) error {
 		}
 		id := ids[0]
 		ids = ids[1:]
+		for i := range b {
+			b[i] = byte(strings.IndexByte(idAlphabet, id[i]))
+		}
+		return nil
+	}
+}
+
+// lowEntropySource cycles through four ids, so that collisions between issued tokens and token-like input
+// are likely and the reservation logic is actually exercised.
+func lowEntropySource() func([]byte) error {
+	ids := []string{"aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc", "dddddddddd"}
+	n := 0
+	return func(b []byte) error {
+		id := ids[n%len(ids)]
+		n++
 		for i := range b {
 			b[i] = byte(strings.IndexByte(idAlphabet, id[i]))
 		}
@@ -280,6 +296,32 @@ func TestSessionConcurrentUse(t *testing.T) {
 			if tokens[g][i] != tokens[0][i] {
 				t.Fatal("goroutines saw different tokens for the same value")
 			}
+		}
+	}
+}
+
+// A session must not keep its inputs alive: stored values and reservations are copies, not substrings.
+func TestSessionDoesNotRetainInput(t *testing.T) {
+	s := newTestRedactor(t).NewSession()
+	in := strings.Repeat("x", 1<<16) + " CPF 123.456.789-09 <CPF_aaaaaaaaaa> " + strings.Repeat("y", 1<<16)
+	mustRedact(t, s, in)
+	lo := uintptr(unsafe.Pointer(unsafe.StringData(in)))
+	hi := lo + uintptr(len(in))
+	inside := func(v string) bool {
+		p := uintptr(unsafe.Pointer(unsafe.StringData(v)))
+		return p >= lo && p < hi
+	}
+	if len(s.values) != 1 || len(s.reserved) != 1 {
+		t.Fatalf("unexpected session state: %v", s)
+	}
+	for _, v := range s.values {
+		if inside(v) {
+			t.Error("a stored value points into the input")
+		}
+	}
+	for lit := range s.reserved {
+		if inside(lit) {
+			t.Error("a reservation points into the input")
 		}
 	}
 }

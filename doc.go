@@ -1,7 +1,8 @@
 // Package redactbr detects and redacts Brazilian personal data — CPF, numeric and alphanumeric CNPJ — and
 // email addresses in text, in-process, using only the standard library.
 //
-// A Redactor holds the configuration and is safe for concurrent use:
+// A Redactor holds the configuration and is safe for concurrent use; its zero value detects everything
+// with the default settings:
 //
 //	r, err := redactbr.New()
 //	if err != nil {
@@ -14,9 +15,10 @@
 //
 // CPF is recognized as DDD.DDD.DDD-DD (formatted), DDDDDDDDD-DD or DDDDDDDDDDD (unformatted). CNPJ is
 // recognized as XX.XXX.XXX/XXXX-DD or XXXXXXXX/XXXX-DD (formatted) or XXXXXXXXXXXXDD (unformatted), where
-// X is a digit or a letter (the alphanumeric CNPJ, in either case) and D a digit. Every candidate must have
-// valid check digits and must not touch a letter or digit on either side. Email addresses are recognized
-// by structure. The full contract, with sources and limitations, is in docs/spec/v0.1.md.
+// X is a digit or a letter (the alphanumeric CNPJ, in either case) and D a digit; the second CNPJ form
+// counts as unformatted when it has lowercase letters. Every candidate must have valid check digits, must
+// not touch a letter or digit on either side, and must not continue a decimal number. Email addresses are
+// recognized by structure. The full contract, with sources and limitations, is in docs/spec/v0.1.md.
 //
 // # Policies
 //

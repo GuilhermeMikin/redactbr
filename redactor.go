@@ -65,13 +65,15 @@ func (m Match) String() string {
 }
 
 // Redactor detects and redacts personal data in text. It holds only configuration, so a Redactor is safe
-// for concurrent use by multiple goroutines.
+// for concurrent use by multiple goroutines. The zero value is ready to use and behaves like New() without
+// options: every entity, the Balanced policy and the default session capacity.
 type Redactor struct {
+	// The fields record what is turned off, so that a zero Redactor detects everything instead of nothing.
 	policy    Policy
-	cpf       bool
-	cnpj      bool
-	email     bool
-	maxValues int
+	noCPF     bool
+	noCNPJ    bool
+	noEmail   bool
+	maxValues int // 0 means DefaultMaxSessionValues
 }
 
 // Option configures a Redactor.
@@ -111,7 +113,7 @@ func New(opts ...Option) (*Redactor, error) {
 	for _, opt := range opts {
 		opt(&c)
 	}
-	r := &Redactor{policy: c.policy, maxValues: c.maxValues}
+	r := &Redactor{policy: c.policy, maxValues: c.maxValues, noCPF: true, noCNPJ: true, noEmail: true}
 	switch c.policy {
 	case Balanced, Strict:
 	default:
@@ -123,11 +125,11 @@ func New(opts ...Option) (*Redactor, error) {
 	for _, e := range c.entities {
 		switch e {
 		case CPF:
-			r.cpf = true
+			r.noCPF = false
 		case CNPJ:
-			r.cnpj = true
+			r.noCNPJ = false
 		case Email:
-			r.email = true
+			r.noEmail = false
 		default:
 			return nil, fmt.Errorf("redactbr: unknown entity %q", string(e))
 		}
@@ -136,6 +138,14 @@ func New(opts ...Option) (*Redactor, error) {
 		return nil, fmt.Errorf("redactbr: session capacity must be at least 1, got %d", c.maxValues)
 	}
 	return r, nil
+}
+
+// capacity returns the session capacity, applying the default for a zero Redactor.
+func (r *Redactor) capacity() int {
+	if r.maxValues == 0 {
+		return DefaultMaxSessionValues
+	}
+	return r.maxValues
 }
 
 // Find returns the values in text that the Redactor would redact, in order and without overlaps.

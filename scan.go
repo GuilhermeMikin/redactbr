@@ -23,22 +23,33 @@ const (
 // identifier candidates start only at token boundaries and are at most 18 bytes long, and email expansion
 // around each '@' is bounded by the RFC 5321 length limits.
 func (r *Redactor) find(s string) []Match {
-	var ms []Match
-	if r.cpf || r.cnpj {
-		ms = r.findIdentifiers(s, ms)
+	var emails, ids []Match
+	if !r.noEmail {
+		emails = findEmails(s, nil)
 	}
-	if r.email {
-		n := len(ms)
-		ms = findEmails(s, ms)
-		if n > 0 && len(ms) > n {
-			ms = resolveOverlaps(ms)
-		}
+	if !r.noCPF || !r.noCNPJ {
+		ids = r.findIdentifiers(s, emails)
 	}
-	return ms
+	switch {
+	case len(emails) == 0:
+		return ids
+	case len(ids) == 0:
+		return emails
+	}
+	return resolveOverlaps(append(ids, emails...))
 }
 
-// findIdentifiers appends CPF and CNPJ matches to ms.
-func (r *Redactor) findIdentifiers(s string, ms []Match) []Match {
+// findIdentifiers returns the CPF and CNPJ matches in s. emails are the email matches, sorted; a '.'
+// right after one of them, or after an identifier, separates values and is not a decimal point.
+func (r *Redactor) findIdentifiers(s string, emails []Match) []Match {
+	var ms []Match
+	lastEnd, e := -1, 0
+	followsMatch := func(pos int) bool {
+		for e < len(emails) && emails[e].End < pos {
+			e++
+		}
+		return pos == lastEnd || (e < len(emails) && emails[e].End == pos)
+	}
 	for i := 0; i < len(s); {
 		if !isASCIIAlnum(s[i]) {
 			i++
@@ -48,9 +59,10 @@ func (r *Redactor) findIdentifiers(s string, ms []Match) []Match {
 		for j < len(s) && isASCIIAlnum(s[j]) {
 			j++
 		}
-		if mayStartIdentifier(s, i, j) && leftBoundary(s, i) {
+		if mayStartIdentifier(s, i, j) && leftBoundary(s, i, followsMatch(i-1)) {
 			if m, ok := r.identifierAt(s, i); ok {
 				ms = append(ms, m)
+				lastEnd = m.End
 				i = m.End
 				continue
 			}
@@ -86,13 +98,13 @@ func mayStartIdentifier(s string, i, j int) bool {
 // identifierAt reports the CNPJ or CPF that starts at s[i], if any, applying shape, boundary, check-digit
 // and policy rules in that order.
 func (r *Redactor) identifierAt(s string, i int) (Match, bool) {
-	if r.cnpj {
+	if !r.noCNPJ {
 		if end, c, formatted, ok := scanCNPJ(s, i); ok && rightBoundary(s, end) && cnpj.Valid(c) &&
 			r.accept(s, i, formatted, cnpjKeyword) {
 			return Match{Entity: CNPJ, Start: i, End: end}, true
 		}
 	}
-	if r.cpf {
+	if !r.noCPF {
 		if end, d, formatted, ok := scanCPF(s, i); ok && rightBoundary(s, end) && cpf.Valid(d) &&
 			r.accept(s, i, formatted, cpfKeyword) {
 			return Match{Entity: CPF, Start: i, End: end}, true
@@ -123,8 +135,9 @@ func scanCPF(s string, i int) (end int, d [cpf.Len]byte, formatted, ok bool) {
 	return 0, d, false, false
 }
 
-// scanCNPJ matches a CNPJ shape at s[i]: XX.XXX.XXX/XXXX-DD or XXXXXXXX/XXXX-DD (formatted), or
-// XXXXXXXXXXXXDD (unformatted), where X is an ASCII letter or digit and D an ASCII digit. It returns the
+// scanCNPJ matches a CNPJ shape at s[i]: XX.XXX.XXX/XXXX-DD or XXXXXXXX/XXXX-DD without lowercase letters
+// (formatted), or XXXXXXXX/XXXX-DD with lowercase letters and XXXXXXXXXXXXDD (unformatted), where X is an
+// ASCII letter or digit and D an ASCII digit. It returns the
 // end offset and the fourteen characters, with letters folded to uppercase.
 func scanCNPJ(s string, i int) (end int, c [cnpj.Len]byte, formatted, ok bool) {
 	if i+18 <= len(s) && s[i+2] == '.' && s[i+6] == '.' && s[i+10] == '/' && s[i+15] == '-' &&
@@ -134,12 +147,23 @@ func scanCNPJ(s string, i int) (end int, c [cnpj.Len]byte, formatted, ok bool) {
 	}
 	if i+16 <= len(s) && s[i+8] == '/' && s[i+13] == '-' &&
 		alnumInto(c[0:8], s[i:i+8]) && alnumInto(c[8:12], s[i+9:i+13]) && digitsInto(c[12:14], s[i+14:i+16]) {
-		return i + 16, c, true, true
+		// Lowercase letters make this shape look like a URL path ("20261030/main-12"), so it then counts
+		// as unformatted.
+		return i + 16, c, !hasLowerASCII(s[i : i+16]), true
 	}
 	if i+14 <= len(s) && alnumInto(c[0:12], s[i:i+12]) && digitsInto(c[12:14], s[i+12:i+14]) {
 		return i + 14, c, false, true
 	}
 	return 0, c, false, false
+}
+
+func hasLowerASCII(s string) bool {
+	for i := range len(s) {
+		if 'a' <= s[i] && s[i] <= 'z' {
+			return true
+		}
+	}
+	return false
 }
 
 // digitsInto copies src into dst if src is all ASCII digits.
@@ -173,8 +197,10 @@ func alnumInto(dst []byte, src string) bool {
 
 // leftBoundary reports whether a candidate may start at s[i]: the previous rune must not be a letter or
 // digit (in any script), and must not be a '.' that follows an ASCII digit, which would make the
-// candidate the tail of a decimal or dotted number.
-func leftBoundary(s string, i int) bool {
+// candidate the tail of a decimal or dotted number — unless dotFollowsMatch reports that the '.' comes
+// right after a detected value, in which case it separates two values. (That exception also keeps the
+// result stable: once the earlier value is replaced, the '.' no longer follows a digit.)
+func leftBoundary(s string, i int, dotFollowsMatch bool) bool {
 	if i == 0 {
 		return true
 	}
@@ -182,7 +208,7 @@ func leftBoundary(s string, i int) bool {
 	if isWordRune(r) {
 		return false
 	}
-	decimalTail := r == '.' && i-size > 0 && isASCIIDigit(s[i-size-1])
+	decimalTail := r == '.' && i-size > 0 && isASCIIDigit(s[i-size-1]) && !dotFollowsMatch
 	return !decimalTail
 }
 
@@ -200,14 +226,19 @@ func rightBoundary(s string, end int) bool {
 	return !decimalHead
 }
 
-// hasKeyword reports whether keyword (lowercase ASCII) occurs, in any case, in the contextWindow bytes
-// before start.
+// hasKeyword reports whether keyword (lowercase ASCII) occurs, in any case and possibly with dots between
+// its letters ("C.P.F."), in the contextWindow bytes before start.
 func hasKeyword(s string, start int, keyword string) bool {
 	window := s[max(0, start-contextWindow):start]
-	for j := 0; j+len(keyword) <= len(window); j++ {
+	for j := range len(window) {
 		k := 0
-		for k < len(keyword) && lowerASCII(window[j+k]) == keyword[k] {
-			k++
+		for l := j; l < len(window) && k < len(keyword); l++ {
+			c := lowerASCII(window[l])
+			if c == keyword[k] {
+				k++
+			} else if c != '.' || k == 0 {
+				break
+			}
 		}
 		if k == len(keyword) {
 			return true
@@ -237,11 +268,17 @@ func resolveOverlaps(ms []Match) []Match {
 	return out
 }
 
+// isWordRune reports whether r continues a word: a letter, digit or combining mark in any script. The
+// Portuguese ordinal indicators ª and º are letters in Unicode but mark abbreviations such as "nº", so
+// they are boundaries.
 func isWordRune(r rune) bool {
 	if r < utf8.RuneSelf {
 		return isASCIIAlnumRune(r)
 	}
-	return unicode.IsLetter(r) || unicode.IsDigit(r)
+	if r == 'ª' || r == 'º' {
+		return false
+	}
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r)
 }
 
 func isASCIIAlnumRune(r rune) bool {

@@ -14,7 +14,8 @@ import (
 )
 
 // The oracle restates the identifier detection rules of docs/spec/v0.1.md as directly as possible:
-// regular expressions for the shapes, every byte offset as a possible start, and a separate overlap pass.
+// regular expressions for the shapes, every byte offset as a possible start, greedy left-to-right
+// acceptance.
 // It is slow on purpose; agreement with Find is evidence that the scanner's shortcuts (skipping runs,
 // trying shapes in a fixed order) do not change the result.
 
@@ -24,45 +25,56 @@ var oracleShapes = []struct {
 	formatted bool
 }{
 	{redactbr.CNPJ, regexp.MustCompile(`^[0-9A-Za-z]{2}\.[0-9A-Za-z]{3}\.[0-9A-Za-z]{3}/[0-9A-Za-z]{4}-[0-9]{2}`), true},
-	{redactbr.CNPJ, regexp.MustCompile(`^[0-9A-Za-z]{8}/[0-9A-Za-z]{4}-[0-9]{2}`), true},
+	{redactbr.CNPJ, regexp.MustCompile(`^[0-9A-Z]{8}/[0-9A-Z]{4}-[0-9]{2}`), true},
+	{redactbr.CNPJ, regexp.MustCompile(`^[0-9A-Za-z]{8}/[0-9A-Za-z]{4}-[0-9]{2}`), false}, // with lowercase
 	{redactbr.CNPJ, regexp.MustCompile(`^[0-9A-Za-z]{12}[0-9]{2}`), false},
 	{redactbr.CPF, regexp.MustCompile(`^[0-9]{3}\.[0-9]{3}\.[0-9]{3}-[0-9]{2}`), true},
 	{redactbr.CPF, regexp.MustCompile(`^[0-9]{9}-[0-9]{2}`), false},
 	{redactbr.CPF, regexp.MustCompile(`^[0-9]{11}`), false},
 }
 
+var oracleKeywords = map[redactbr.Entity]*regexp.Regexp{
+	redactbr.CPF:  regexp.MustCompile(`c\.*p\.*f`),
+	redactbr.CNPJ: regexp.MustCompile(`c\.*n\.*p\.*j`),
+}
+
 func oracleFind(s string, strict bool) []redactbr.Match {
-	isWord := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+	isWord := func(r rune) bool {
+		return r != 'ª' && r != 'º' && (unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r))
+	}
 	isDigit := func(b byte) bool { return '0' <= b && b <= '9' }
-	var all []redactbr.Match
+	var out []redactbr.Match
+	end := 0
 	for i := 0; i < len(s); i++ {
+		if i < end {
+			continue // inside an accepted match
+		}
+		afterMatch := len(out) > 0 && out[len(out)-1].End == i-1
 		for _, sh := range oracleShapes {
 			m := sh.re.FindString(s[i:])
 			if m == "" {
 				continue
 			}
-			end := i + len(m)
+			stop := i + len(m)
 			if i > 0 {
 				r, n := utf8.DecodeLastRuneInString(s[:i])
-				if isWord(r) || (r == '.' && i-n > 0 && isDigit(s[i-n-1])) {
+				if isWord(r) || (r == '.' && i-n > 0 && isDigit(s[i-n-1]) && !afterMatch) {
 					continue
 				}
 			}
-			if end < len(s) {
-				r, n := utf8.DecodeRuneInString(s[end:])
-				if isWord(r) || (r == '.' && end+n < len(s) && isDigit(s[end+n])) {
+			if stop < len(s) {
+				r, n := utf8.DecodeRuneInString(s[stop:])
+				if isWord(r) || (r == '.' && stop+n < len(s) && isDigit(s[stop+n])) {
 					continue
 				}
 			}
 			v := strings.ToUpper(strings.NewReplacer(".", "", "-", "", "/", "").Replace(m))
-			keyword := "cpf"
 			if sh.entity == redactbr.CNPJ {
 				var c [cnpj.Len]byte
 				copy(c[:], v)
 				if !cnpj.Valid(c) {
 					continue
 				}
-				keyword = "cnpj"
 			} else {
 				var d [cpf.Len]byte
 				copy(d[:], v)
@@ -71,18 +83,11 @@ func oracleFind(s string, strict bool) []redactbr.Match {
 				}
 			}
 			window := strings.ToLower(s[max(0, i-32):i])
-			if sh.formatted || strict || strings.Contains(window, keyword) {
-				all = append(all, redactbr.Match{Entity: sh.entity, Start: i, End: end})
+			if sh.formatted || strict || oracleKeywords[sh.entity].MatchString(window) {
+				out = append(out, redactbr.Match{Entity: sh.entity, Start: i, End: stop})
+				end = stop
 				break // shapes are listed longest first; a shorter one at the same offset cannot win
 			}
-		}
-	}
-	var out []redactbr.Match
-	end := 0
-	for _, m := range all {
-		if m.Start >= end {
-			out = append(out, m)
-			end = m.End
 		}
 	}
 	return out
@@ -93,7 +98,7 @@ func oracleFind(s string, strict bool) []redactbr.Match {
 func randomText(rng *rand.Rand) string {
 	pieces := []string{
 		"0", "1", "5", "9", "a", "X", "z", ".", "-", "/", " ", ",", "_", "é", "\u00a0", "\xff",
-		"cpf", "CNPJ", "Cpf:", "cnpj=", "123", "456.", "0001", "-09",
+		"cpf", "CNPJ", "Cpf:", "cnpj=", "C.P.F.", "c.n.p.j", "nº", "ª", "\u0301", "/", "123", "456.", "0001", "-09",
 	}
 	var b strings.Builder
 	for range rng.IntN(24) {

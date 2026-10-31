@@ -85,6 +85,12 @@ func TestRedactCPF(t *testing.T) {
 		{"spaces instead of separators", "CPF 123 456 789 09", "CPF 123 456 789 09", ""},
 		{"full-width digits are not normalized", "CPF １２３.４５６.７８９-０９", "CPF １２３.４５６.７８９-０９", ""},
 		{"zero-width space inside", "CPF 123.456\u200b.789-09", "CPF 123.456\u200b.789-09", ""},
+		{"ordinal indicator before", "CPF nº123.456.789-09", "CPF nº<CPF>", ""},
+		{"feminine ordinal indicator before", "inscrita sob a ª12345678909 cpf", "inscrita sob a ª12345678909 cpf", "inscrita sob a ª<CPF> cpf"},
+		{"dotted keyword", "C.P.F.: 12345678909", "C.P.F.: <CPF>", ""},
+		{"keyword glued to the value is not a boundary", "CPF123.456.789-09", "CPF123.456.789-09", ""},
+		{"combining mark before", "cpf e\u030112345678909", "cpf e\u030112345678909", ""},
+		{"combining mark after", "cpf 12345678909\u0301", "cpf 12345678909\u0301", ""},
 	})
 }
 
@@ -112,6 +118,13 @@ func TestRedactCNPJ(t *testing.T) {
 		{"letter before", "cnpj XAB12CD34EF5602", "cnpj XAB12CD34EF5602", ""},
 		{"digit after", "cnpj 112233445566130", "cnpj 112233445566130", ""},
 		{"in a URL path", "GET /suppliers/11223344556613/orders", "GET /suppliers/11223344556613/orders", "GET /suppliers/<CNPJ>/orders"},
+		{"dotted keyword", "C.N.P.J. 11223344556613", "C.N.P.J. <CNPJ>", ""},
+		{"after a detected value and a dot", "12345678909.AB12CD34EF5602", "12345678909.AB12CD34EF5602", "<CPF>.<CNPJ>"},
+		{"without dots, lowercase, no keyword", "ab12cd34/ef56-02", "ab12cd34/ef56-02", "<CNPJ>"},
+		{"without dots, lowercase, keyword", "cnpj ab12cd34/ef56-02", "cnpj <CNPJ>", ""},
+		// Paths shaped like XXXXXXXX/XXXX-DD whose check digits happen to be valid.
+		{"URL path with lowercase letters", "GET /builds/20261030/main-12/log", "GET /builds/20261030/main-12/log", "GET /builds/<CNPJ>/log"},
+		{"another URL path", "a1b2c3d4/runs-63 and checkout/step-19", "a1b2c3d4/runs-63 and checkout/step-19", "<CNPJ> and <CNPJ>"},
 	})
 }
 
@@ -132,6 +145,19 @@ func TestRedactEmail(t *testing.T) {
 		{"local part of exactly 64 octets", strings.Repeat("a", 64) + "@example.com", "<EMAIL>", ""},
 		{"digits of a CPF as local part", "12345678909@example.com", "<EMAIL>", ""},
 		{"second @ right after an address", "ana@example.com@example.org", "<EMAIL>@example.org", ""},
+		{"hyphenated text glued after", "Contact ana@example.com-thanks", "Contact <EMAIL>-thanks", ""},
+		{"number glued after", "session:ana@example.com-1730303030", "session:<EMAIL>-1730303030", ""},
+		{"dot and digit glued after", "ana@example.com.2", "<EMAIL>.2", ""},
+		{"hyphenated domain", "ana@my-company.com.br", "<EMAIL>", ""},
+		{"long trailing punctuation", "ana@example.com" + strings.Repeat(".", 260), "<EMAIL>" + strings.Repeat(".", 260), ""},
+		{"long trailing hyphens", "ana@example.com" + strings.Repeat("-", 260), "<EMAIL>" + strings.Repeat("-", 260), ""},
+		{"long leading punctuation", strings.Repeat(".", 70) + "ana@example.com", strings.Repeat(".", 70) + "<EMAIL>", ""},
+		{"uppercase punycode", "ana@example.XN--P1AI", "<EMAIL>", ""},
+		{"apostrophe in the local part", "sant'anna@example.com", "<EMAIL>", ""},
+		{"quoted address", "'ana@example.com'", "'<EMAIL>'", ""},
+		{"decomposed accent", "joa\u0303o@example.com", "<EMAIL>", ""},
+		{"two addresses glued with a hyphen", "ana@example.com-bob@example.org", "<EMAIL><EMAIL>", ""},
+		{"address followed by digits with CPF check digits", "a@b.co.12345678909", "<EMAIL>.12345678909", "<EMAIL>.<CPF>"},
 	})
 }
 
@@ -219,6 +245,20 @@ func TestNewRejectsInvalidConfiguration(t *testing.T) {
 				t.Errorf("error %q lacks the package prefix", err)
 			}
 		})
+	}
+}
+
+func TestZeroRedactorDetectsEverything(t *testing.T) {
+	var r redactbr.Redactor // not created with New: must not silently detect nothing
+	in := "CPF 123.456.789-09, CNPJ AB.12C.D34/EF56-02, ana@example.com, cpf 98765432100"
+	want := mustNew(t).Redact(in)
+	if got := r.Redact(in); got != want || got == in {
+		t.Fatalf("zero Redactor: got %q, want %q", got, want)
+	}
+	s := r.NewSession()
+	out, err := s.Redact(in)
+	if err != nil || out == in || s.Restore(out) != in {
+		t.Fatalf("zero Redactor session: Redact returned (%d bytes, %v)", len(out), err)
 	}
 }
 
