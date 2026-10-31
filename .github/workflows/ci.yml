@@ -122,3 +122,11 @@ jobs:
       # Every fuzz target for 10 seconds. Longer runs happen locally (make fuzz FUZZTIME=…).
       - name: Fuzz targets
         run: make fuzz FUZZTIME=10s
+
+      # A failing input is written to testdata/fuzz/<FuzzName>/; print it so the failure can be reproduced
+      # by saving it under the same path locally. Fuzz inputs are generated, never real data.
+      - name: Print new fuzz failures
+        if: failure()
+        run: |
+          git status --porcelain --untracked-files=all | awk '$1 == "??" {print $2}' | grep 'testdata/fuzz/' |
+            while read -r f; do echo "== $f"; cat "$f"; echo; done
