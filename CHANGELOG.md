@@ -25,6 +25,8 @@ notice.
 - Runnable examples (`examples/basic`, `examples/llm-stream`), godoc examples, benchmarks, fuzz targets and
   a regexp-based oracle test.
 - Specification, ADRs, roadmap, prior-art notes, security policy, contribution guide (DCO) and CI.
+- A harness that measures whether LLMs copy tokens faithfully (`internal/tokenfidelity`,
+  `docs/token-fidelity.md`). It runs offline by default; no real model has been measured yet.
 
 ### Security
 

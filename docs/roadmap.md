@@ -19,12 +19,14 @@ Goal: a small, usable, safe library that is convincing on its own.
 | Reversible session tokenization (`<CPF_k7q2xm9pb3>`), reservation of look-alikes, capacity | done |
 | Streaming restoration (`RestoreWriter`, split tokens, bounded buffer) | done |
 | Unit, fuzz, race, differential (oracle) tests; benchmarks; runnable examples; CI | done |
+| Harness for token fidelity with real models | done; no real model measured yet, which needs the owner's authorization |
 | `slog.Handler` that redacts log records | deferred (cut for this release candidate; see decisions log D-019) |
 | `mask` and keyed (HMAC) replacement strategies | not planned for v0.1: would widen the API before there is demand |
 | Review of the API, README and security model before the first public release | pending |
 
-Remaining before tagging `v0.1.0` (a separate decision): the manual review above, a normative definition
-of the CPF check digits if one can be read (spec §3.1), and a decision on the open questions in the spec.
+Remaining before tagging `v0.1.0` (a separate decision): the manual review above, measuring token fidelity with
+real models and freezing the token grammar ([harness](token-fidelity.md)), a normative definition of the CPF
+check digits if one can be read (spec §3.1), and a decision on the open questions in the spec.
 
 ## v0.2 — Deeper Brazil coverage and structured data (planned)
 

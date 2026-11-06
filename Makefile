@@ -4,7 +4,7 @@
 GO       ?= go
 FUZZTIME ?= 20s
 
-.PHONY: check fmt fmt-check vet lint test race bench fuzz vuln examples
+.PHONY: check fmt fmt-check vet lint test race bench fuzz vuln examples fidelity
 
 check: fmt-check vet lint test race examples vuln
 
@@ -45,3 +45,7 @@ vuln:
 examples:
 	$(GO) run ./examples/basic
 	$(GO) run ./examples/llm-stream
+
+# Runs the token fidelity harness offline, against simulated models. It sends nothing; see docs/token-fidelity.md.
+fidelity:
+	$(GO) run ./internal/tokenfidelity

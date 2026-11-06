@@ -266,3 +266,17 @@ the code, with new tests and mutation checks.
 - **Left as is:** `Session.Redact` builds its output while holding the write lock. A session belongs to one
   conversation, so contention is low and the change has no measured benefit yet.
 - **Token grammar stays provisional** until the fidelity harness runs against real models (D-029).
+
+### D-029 Token fidelity harness
+
+- `internal/tokenfidelity` measures token round trips with LLMs. It is `package main` under `internal/` because
+  it is a development tool, not API or a CLI (the CLI is planned for v0.3), and because `go test ./...` then
+  covers it. Details and the decision rule for the grammar are in `docs/token-fidelity.md`.
+- **Nothing was sent to any provider in this session.** No credentials were used and no paid call was made; all
+  results so far come from simulated models and local test servers, which test the harness and not the models.
+- Provider calls use `net/http` rather than official SDKs, because ADR-0002 keeps the module free of
+  dependencies. A separate module could use the SDKs, at the cost of a second `go.mod` for two small requests.
+- Sampling parameters are left out, since API version `2026-10-21` of the Claude API rejects them and a pipeline
+  gets the default anyway. No fallback model is configured, so that a run measures the model it names.
+- A run is capped (`-max-requests`), plain HTTP is refused except on localhost, redirects are not followed (a
+  custom key header would follow them), and the key appears in no report.

@@ -24,7 +24,8 @@ make fmt-check   # fails if gofmt would change a file
 make bench       # go test -run='^$' -bench=. -benchmem ./...
 make fuzz        # runs every fuzz target for FUZZTIME (default 20s each)
 make examples    # runs the programs in examples/
-make check       # everything above except bench and fuzz
+make fidelity    # token fidelity harness, offline against simulated models
+make check       # everything above except bench, fuzz and fidelity
 ```
 
 The Makefile never installs anything. Go 1.26 or newer is required (`go.mod`); CI tests the supported Go
@@ -44,6 +45,9 @@ releases.
   code. README and examples must only show APIs that compile today.
 - **Out of scope for now:** dashboards, control planes, SaaS, billing, tenants, databases, Redis, Kafka,
   Kubernetes, full LLM proxies, MCP servers. See [docs/roadmap.md](docs/roadmap.md).
+- **No paid calls without the owner.** The fidelity harness (`internal/tokenfidelity`) reaches a provider only
+  with `-live`. Never run that, or use provider credentials, without the owner's authorization in the current
+  session.
 
 ### External facts
 
@@ -120,11 +124,13 @@ releases.
 | `session.go`, `token.go` | Reversible sessions, token grammar and generation |
 | `restore.go` | `RestoreWriter` (streaming restoration) |
 | `internal/cpf`, `internal/cnpj` | Check-digit validators (no detection policy) |
+| `internal/tokenfidelity` | Harness that measures token round trips with LLMs, offline by default |
 | `examples/` | Runnable programs; CI runs them |
 | `docs/spec/v0.1.md` | Behavior contract: entities, formats, policy, tokens, limits |
 | `docs/adr/` | Architecture decision records |
 | `docs/decisions-log.md` | Smaller decisions and session notes, newest last |
 | `docs/roadmap.md`, `docs/prior-art.md` | Plan and ecosystem notes |
+| `docs/token-fidelity.md` | How to measure token fidelity, and the results |
 
 ## Definition of done
 
