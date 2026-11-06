@@ -3,13 +3,14 @@
 // It implements validation only. Formatting, boundaries, context and the decision to redact belong to the
 // detection policy in package redactbr.
 //
-// The algorithm matches the check-digit routine the Receita Federal uses on its public CPF status page
-// (routine TestaCPF in
-// https://servicos.receita.fazenda.gov.br/servicos/cpf/consultasituacao/funcoes03.js, accessed
-// 2026-10-30): the first check digit weighs the nine base digits 10 down to 2, the second weighs the first
-// ten digits 11 down to 2, and a remainder of 0 or 1 modulo 11 yields 0 (otherwise 11 minus the
-// remainder). Like that routine, the all-zero number is rejected and other repeated-digit numbers are not.
-// A normative publication of the algorithm was not located; see docs/spec/v0.1.md.
+// The algorithm is the one the Receita Federal documents in the e-Financeira filing manual (Anexo II,
+// rule REGRA_VALIDA_CPF; see docs/spec/v0.1.md for the versions and URLs) and implements in the routine
+// TestaCPF of its public CPF status page
+// (https://servicos.receita.fazenda.gov.br/servicos/cpf/consultasituacao/funcoes03.js, accessed
+// 2026-11-06). In the form used here, the first check digit weighs the nine base digits 10 down to 2, the
+// second weighs the first ten digits 11 down to 2, and a remainder of 0 or 1 modulo 11 yields 0 (otherwise
+// 11 minus the remainder). Like TestaCPF, the all-zero number is rejected and other repeated-digit numbers
+// are not. Both sources are official technical material, not the regulation that governs the CPF.
 package cpf
 
 // Len is the number of digits in a CPF.

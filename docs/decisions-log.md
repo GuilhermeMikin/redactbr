@@ -188,3 +188,26 @@ An independent review (a separate agent, read-only, with reproductions) ran befo
   reusable output buffer.
 - **Docs**: the spec, README, doc.go and CLAUDE.md were corrected where they promised more than the code
   (oracle coverage, "always" for formatted values, SSE bodies, one-pass wording).
+
+---
+
+## 2026-11-06 — Session 2: v0.1 review and hardening
+
+### D-025 A written official source for the CPF check digits
+
+- Found the written rule: `REGRA_VALIDA_CPF` in the e-Financeira manual, Anexo II, versions 2.1.1 and 2.1.2
+  (spec §3.1). It supersedes the "no publication located" part of D-007. The worked example (`280012389-38`)
+  entered the validator tests as an official vector, and the rule was ported for a differential test.
+- Classification, to keep official implementation apart from normative rule: the manual is official
+  technical documentation under an Ato Declaratório Executivo Cofis and governs the validation of that
+  filing; `TestaCPF` is an official implementation; IN RFB 2.172/2024 is the CPF regulation and **was not
+  read**, so a normative definition of the check digits stays `pending official source`.
+- Why it was not read: `normas.receita.fazenda.gov.br` and `normasinternet2.receita.fazenda.gov.br` render
+  with JavaScript, and the API behind them returned HTTP 403 to anonymous requests. The Diário Oficial search
+  did not return the act. The access control was not worked around.
+- Details for whoever repeats this: `sped.rfb.gov.br` answers on HTTP only. SHA-256 of the PDFs read:
+  `faadc79d1556bdf822c25e9fef4e93522a5626f120d5b030a13d823241e6d4ec` (2.1.2),
+  `6b1b1d2494b68bf297fdfd141eaf1aa22a1430117c79ebecec9539e1532354b2` (2.1.1). The site's list of acts and
+  the manuals' covers disagree on the dates of the acts (nº 10: 19 and 25 May 2026; nº 9: 16 and 22 April
+  2026), so this project cites them by number. The site's "version in production" page still lists 2.1.1;
+  the rule's text is identical in both versions.

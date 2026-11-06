@@ -173,8 +173,9 @@ RedactBR can support LGPD data-minimization measures; using it does not make a s
 - Only CPF, CNPJ and email. Other Brazilian identifiers (CNH, PIS, CNS, título de eleitor, phone numbers,
   CEP) and payment cards are planned, not implemented.
 - Token survival in real models has not been measured yet.
-- The CPF check-digit rule matches the Receita Federal's own validation routine; a normative publication of
-  the algorithm was not located (see the spec).
+- The CPF check-digit rule is the one the Receita Federal documents in its e-Financeira manual and uses in
+  its own validation routine. Those are official technical sources; a normative definition is still pending
+  (see the spec).
 
 ## Technical decisions
 

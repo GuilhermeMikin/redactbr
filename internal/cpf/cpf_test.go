@@ -6,7 +6,12 @@ import (
 )
 
 // Every CPF in this file is generated from a simple, explainable base (sequential digits, digits of pi,
-// single non-zero digits); none was collected. A generated number can still coincide with an assigned one.
+// single non-zero digits), except officialExample below; none was collected. A generated number can still
+// coincide with an assigned one.
+
+// officialExample is the worked example of rule REGRA_VALIDA_CPF in the Receita Federal's e-Financeira
+// manual, Anexo II (versions 2.1.1 and 2.1.2, accessed 2026-11-06; URLs in docs/spec/v0.1.md).
+const officialExample = "28001238938"
 
 func digits(t testing.TB, s string) [Len]byte {
 	t.Helper()
@@ -24,6 +29,7 @@ func TestValid(t *testing.T) {
 		in   string
 		want bool
 	}{
+		{"official worked example", officialExample, true},
 		{"sequential base", "12345678909", true},
 		{"descending base", "98765432100", true},
 		{"single digit base", "00000000191", true},
@@ -107,6 +113,44 @@ func TestValidMatchesReceitaRoutine(t *testing.T) {
 		}
 		if got, want := Valid(d), receitaTestaCPF(string(d[:])); got != want {
 			t.Fatalf("Valid disagrees with the Receita routine (got %v, want %v)", got, want)
+		}
+	}
+}
+
+// manualCheckDigits is an independent port of rule REGRA_VALIDA_CPF in the e-Financeira manual: "o resto da
+// divisão por 11 do somatório da multiplicação de cada algarismo da base respectivamente por 9, 8, 7, 6, 5,
+// 4, 3, 2, 1 e 0, a partir da unidade. O resto 10 é considerado 0." Counted from the left, the weights are
+// 1 to 9 for the first check digit and 0 to 9 for the second.
+func manualCheckDigits(base string) (dv1, dv2 int) {
+	remainder := func(digits string, firstWeight int) int {
+		sum := 0
+		for i := range len(digits) {
+			sum += int(digits[i]-'0') * (firstWeight + i)
+		}
+		if r := sum % 11; r != 10 {
+			return r
+		}
+		return 0
+	}
+	dv1 = remainder(base, 1)
+	dv2 = remainder(base+string(byte('0'+dv1)), 0)
+	return dv1, dv2
+}
+
+func TestCheckDigitsMatchManualRule(t *testing.T) {
+	if dv1, dv2 := manualCheckDigits(officialExample[:BaseLen]); dv1 != 3 || dv2 != 8 {
+		t.Fatalf("the port of the manual's rule gives %d%d for its own worked example, want 38", dv1, dv2)
+	}
+	rng := rand.New(rand.NewPCG(5, 6))
+	for range 200000 {
+		var base [BaseLen]byte
+		for i := range base {
+			base[i] = byte('0' + rng.IntN(10))
+		}
+		dv1, dv2, ok := CheckDigits(base)
+		want1, want2 := manualCheckDigits(string(base[:]))
+		if !ok || int(dv1-'0') != want1 || int(dv2-'0') != want2 {
+			t.Fatalf("CheckDigits disagrees with the manual's rule for a generated base: got %c%c, want %d%d", dv1, dv2, want1, want2)
 		}
 	}
 }
