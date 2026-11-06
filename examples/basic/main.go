@@ -24,7 +24,7 @@ func main() {
 	}
 
 	section("Input", input)
-	section("Typed replacement, Balanced (the default; unformatted numbers need a keyword such as \"cpf\" before them)",
+	section("Typed replacement, Balanced (the default; unformatted numbers need a keyword such as \"cpf\" nearby)",
 		balanced.Redact(input))
 	section("Typed replacement, Strict (every value with valid check digits, including an order number that "+
 		"happens to have valid CNPJ check digits)", strict.Redact(input))

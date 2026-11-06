@@ -11,7 +11,7 @@ import (
 // patterns) with the official check-digit algorithms; none was collected. A generated number can still
 // coincide with an assigned one.
 //
-//	CPF   123.456.789-09  987.654.321-00  111.111.111-11 (repeated digits)
+//	CPF   123.456.789-09  987.654.321-00  314.159.265-90  111.111.111-11 (repeated digits)
 //	CNPJ  11.223.344/5566-13 (numeric)  AB.12C.D34/EF56-02 (alphanumeric)
 
 func mustNew(t testing.TB, opts ...redactbr.Option) *redactbr.Redactor {
@@ -86,7 +86,7 @@ func TestRedactCPF(t *testing.T) {
 		{"full-width digits are not normalized", "CPF １２３.４５６.７８９-０９", "CPF １２３.４５６.７８９-０９", ""},
 		{"zero-width space inside", "CPF 123.456\u200b.789-09", "CPF 123.456\u200b.789-09", ""},
 		{"ordinal indicator before", "CPF nº123.456.789-09", "CPF nº<CPF>", ""},
-		{"feminine ordinal indicator before", "inscrita sob a ª12345678909 cpf", "inscrita sob a ª12345678909 cpf", "inscrita sob a ª<CPF> cpf"},
+		{"feminine ordinal indicator before", "inscrita sob a ª12345678909", "inscrita sob a ª12345678909", "inscrita sob a ª<CPF>"},
 		{"dotted keyword", "C.P.F.: 12345678909", "C.P.F.: <CPF>", ""},
 		{"keyword glued to the value is not a boundary", "CPF123.456.789-09", "CPF123.456.789-09", ""},
 		{"combining mark before", "cpf e\u030112345678909", "cpf e\u030112345678909", ""},
@@ -181,10 +181,126 @@ func TestContextWindow(t *testing.T) {
 	if got := r.Redact(outside); got != outside {
 		t.Error("keyword 33 bytes before the value was used as context")
 	}
-	after := "12345678909 is my cpf"
-	if got := r.Redact(after); got != after {
-		t.Error("a keyword after the value was used as context")
+	// The same holds for the 32 bytes after the value.
+	inside = "12345678909" + strings.Repeat(" ", 29) + "cpf"
+	if got := r.Redact(inside); got == inside {
+		t.Error("keyword 32 bytes after the value was not used as context")
 	}
+	outside = "12345678909" + strings.Repeat(" ", 30) + "cpf"
+	if got := r.Redact(outside); got != outside {
+		t.Error("keyword 33 bytes after the value was used as context")
+	}
+}
+
+func TestKeywordAfterValue(t *testing.T) {
+	runRedactCases(t, []redactCase{
+		// The keyword is about the value before it.
+		{"sentence", "12345678909 é meu CPF", "<CPF> é meu CPF", ""},
+		{"sentence in English, with a period", "12345678909 is my cpf.", "<CPF> is my cpf.", ""},
+		{"parentheses", "12345678909 (CPF)", "<CPF> (CPF)", ""},
+		{"dash and more text", "12345678909 - CPF - Ana", "<CPF> - CPF - Ana", ""},
+		{"hyphen", "12345678909-cpf", "<CPF>-cpf", ""},
+		{"after a comma", "12345678909, meu CPF", "<CPF>, meu CPF", ""},
+		{"dotted keyword", "12345678909 é meu C.P.F.", "<CPF> é meu C.P.F.", ""},
+		{"plural", "12345678909 consta nos CPFs", "<CPF> consta nos CPFs", ""},
+		{"quoted value", `"12345678909" é o CPF`, `"<CPF>" é o CPF`, ""},
+		{"value of the next JSON field", `{"doc":"12345678909","tipo":"CPF"}`, `{"doc":"<CPF>","tipo":"CPF"}`, ""},
+		{"CSV row", "12345678909,CPF,Ana", "<CPF>,CPF,Ana", ""},
+		{"table row", "| 12345678909 | CPF |", "| <CPF> | CPF |", ""},
+		{"tab-separated", "12345678909\tCPF", "<CPF>\tCPF", ""},
+		{"closing tag", "12345678909</cpf>", "<CPF></cpf>", ""},
+		{"partially formatted", "123456789-09 é meu CPF", "<CPF> é meu CPF", ""},
+		{"numeric CNPJ", "11223344556613 é o CNPJ", "<CNPJ> é o CNPJ", ""},
+		{"alphanumeric CNPJ", "AB12CD34EF5602 é o cnpj", "<CNPJ> é o cnpj", ""},
+		{"lowercase CNPJ without dots", "ab12cd34/ef56-02 é o CNPJ", "<CNPJ> é o CNPJ", ""},
+		{"keyword followed by a number later", "12345678909 é meu CPF e 42 é meu pedido", "<CPF> é meu CPF e 42 é meu pedido", ""},
+		{"keyword followed by a closing bracket and a number", "12345678909 (CPF) 42", "<CPF> (CPF) 42", ""},
+		// The keyword labels what comes next.
+		{"key=value log", "id=12345678909 cpf=98765432100", "id=12345678909 cpf=<CPF>", "id=<CPF> cpf=<CPF>"},
+		{"key=value log with another value", "id=12345678909 cpf=ok", "id=12345678909 cpf=ok", "id=<CPF> cpf=ok"},
+		{"compact JSON", `{"id":"12345678909","cpf":"98765432100"}`, `{"id":"12345678909","cpf":"<CPF>"}`, `{"id":"<CPF>","cpf":"<CPF>"}`},
+		{"spaced JSON", `{"id": 12345678909, "cpf": null}`, `{"id": 12345678909, "cpf": null}`, `{"id": <CPF>, "cpf": null}`},
+		{"Python literal", `{'id': '12345678909', 'cpf': 'x'}`, `{'id': '12345678909', 'cpf': 'x'}`, `{'id': '<CPF>', 'cpf': 'x'}`},
+		{"followed by a number", "pedido 12345678909 cpf 98765432100", "pedido 12345678909 cpf <CPF>", "pedido <CPF> cpf <CPF>"},
+		{"followed by a dash and a number", "pedido 12345678909 CPF - 98765432100", "pedido 12345678909 CPF - <CPF>", "pedido <CPF> CPF - <CPF>"},
+		{"followed by a bracket and a number", "pedido 12345678909 CPF (98765432100)", "pedido 12345678909 CPF (<CPF>)", "pedido <CPF> CPF (<CPF>)"},
+		{"followed by a hash and a number", "pedido 12345678909 CPF #98765432100", "pedido 12345678909 CPF #<CPF>", "pedido <CPF> CPF #<CPF>"},
+		{"followed by a colon", "12345678909 é meu CPF: ok", "12345678909 é meu CPF: ok", "<CPF> é meu CPF: ok"},
+		// Something separates the keyword from the value.
+		{"another sentence", "pedido 12345678909. CPF do cliente", "pedido 12345678909. CPF do cliente", "pedido <CPF>. CPF do cliente"},
+		{"after an exclamation", "12345678909! CPF", "12345678909! CPF", "<CPF>! CPF"},
+		{"after a question", "12345678909? CPF", "12345678909? CPF", "<CPF>? CPF"},
+		{"after a semicolon", "12345678909; CPF", "12345678909; CPF", "<CPF>; CPF"},
+		{"on the next line", "pedido 12345678909\nCPF do cliente", "pedido 12345678909\nCPF do cliente", "pedido <CPF>\nCPF do cliente"},
+		{"after a carriage return", "pedido 12345678909\r\nCPF", "pedido 12345678909\r\nCPF", "pedido <CPF>\r\nCPF"},
+		{"after a written-out line break", `pedido 12345678909\n CPF`, `pedido 12345678909\n CPF`, `pedido <CPF>\n CPF`},
+		{"another number in between", "pedido 12345678909 lote 7 CPF", "pedido 12345678909 lote 7 CPF", "pedido <CPF> lote 7 CPF"},
+		// The keyword is part of another word.
+		{"key in camel case", "12345678909 customerCpf", "12345678909 customerCpf", "<CPF> customerCpf"},
+		{"key in snake case", "12345678909 nr_cpf", "12345678909 nr_cpf", "<CPF> nr_cpf"},
+		{"key prefix", "12345678909 cpf_status", "12345678909 cpf_status", "<CPF> cpf_status"},
+		{"letters after", "12345678909 cpfoo", "12345678909 cpfoo", "<CPF> cpfoo"},
+		{"accented letter before", "12345678909 écpf", "12345678909 écpf", "<CPF> écpf"},
+		{"combining mark after", "12345678909 cpf\u0301", "12345678909 cpf\u0301", "<CPF> cpf\u0301"},
+		// One entity's keyword does not count for the other.
+		{"cnpj keyword after a CPF", "12345678909 é meu CNPJ", "12345678909 é meu CNPJ", "<CPF> é meu CNPJ"},
+		{"cpf keyword after a CNPJ", "11223344556613 é meu CPF", "11223344556613 é meu CPF", "<CNPJ> é meu CPF"},
+		// Validity comes first.
+		{"invalid check digits", "12345678908 é meu CPF", "12345678908 é meu CPF", ""},
+	})
+}
+
+func TestValueLists(t *testing.T) {
+	far := strings.Repeat(" ", 33)  // beyond the window
+	near := strings.Repeat(" ", 32) // at the edge of the window
+	runRedactCases(t, []redactCase{
+		{"keyword first, past the window", "CPFs: 12345678909, 98765432100, 31415926590, 12345678909, 98765432100",
+			"CPFs: <CPF>, <CPF>, <CPF>, <CPF>, <CPF>", ""},
+		{"column under a header", "cpf\n12345678909\n98765432100\n31415926590\n12345678909\n98765432100",
+			"cpf\n<CPF>\n<CPF>\n<CPF>\n<CPF>\n<CPF>", ""},
+		{"an invalid number does not end a list", "CPFs: 12345678909, 12345678908, 98765432100, 12345678908, 31415926590",
+			"CPFs: <CPF>, 12345678908, <CPF>, 12345678908, <CPF>", ""},
+		{"formatted values carry context", "CPF 123.456.789-09, 987.654.321-00, 12345678909", "CPF <CPF>, <CPF>, <CPF>", ""},
+		{"at the edge of the window", "CPF 12345678909" + near + "98765432100", "CPF <CPF>" + near + "<CPF>", ""},
+		{"beyond the window", "CPF 12345678909" + far + "98765432100", "CPF <CPF>" + far + "98765432100", "CPF <CPF>" + far + "<CPF>"},
+		{"another entity does not carry context", "CPF 123.456.789-09 / " + "11223344556613", "CPF <CPF> / 11223344556613", "CPF <CPF> / <CNPJ>"},
+		{"formatted value without context", "123.456.789-09 pedido 98765432100", "<CPF> pedido 98765432100", "<CPF> pedido <CPF>"},
+		{"keyword after, two values", "12345678909 e 98765432100 são meus CPFs", "<CPF> e <CPF> são meus CPFs", ""},
+		{"keyword after, three values", "12345678909, 98765432100, 31415926590 são CPFs", "<CPF>, <CPF>, <CPF> são CPFs", ""},
+		{"keyword after, a formatted value last", "12345678909 e 987.654.321-00 são CPFs", "<CPF> e <CPF> são CPFs", ""},
+		{"keyword after, a formatted value in the middle", "12345678909, 987.654.321-00, 98765432100 são CPFs", "<CPF>, <CPF>, <CPF> são CPFs", ""},
+		{"keyword after, the first value too far", "12345678909" + far + "98765432100 é meu CPF", "12345678909" + far + "<CPF> é meu CPF", "<CPF>" + far + "<CPF> é meu CPF"},
+		{"keyword after, another entity in between", "12345678909 11223344556613 98765432100 é meu CPF", "12345678909 11223344556613 <CPF> é meu CPF", "<CPF> <CNPJ> <CPF> é meu CPF"},
+		{"a label does not reach back", "pedido 12345678909, CPF 98765432100", "pedido 12345678909, CPF <CPF>", "pedido <CPF>, CPF <CPF>"},
+		{"a formatted value does not reach back", "pedido 12345678909, 987.654.321-00", "pedido 12345678909, <CPF>", "pedido <CPF>, <CPF>"},
+		// The last two characters of the first candidate start the second one, a formatted CNPJ.
+		{"overlapping candidates", "ab12cd34/ef56-02.ABC.DEF/0001-82 é o cnpj", "ab12cd34/ef56-<CNPJ> é o cnpj", "<CNPJ>.ABC.DEF/0001-82 é o cnpj"},
+	})
+
+	// Values pulled in by a later keyword stay in order among the others.
+	got := mustNew(t).Find("12345678909, 987.654.321-00, 98765432100 são CPFs")
+	want := []redactbr.Match{{Entity: redactbr.CPF, Start: 0, End: 11}, {Entity: redactbr.CPF, Start: 13, End: 27}, {Entity: redactbr.CPF, Start: 29, End: 40}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Errorf("Find = %v, want %v", got, want)
+	}
+}
+
+func TestEscapeSequencesWrittenOut(t *testing.T) {
+	runRedactCases(t, []redactCase{
+		{"formatted CPF after a line break", `"lista:\n123.456.789-09\n987.654.321-00"`, `"lista:\n<CPF>\n<CPF>"`, ""},
+		{"formatted CPF after a tab", `a\t123.456.789-09`, `a\t<CPF>`, ""},
+		{"formatted CPF after a carriage return", `a\r\n123.456.789-09`, `a\r\n<CPF>`, ""},
+		{"formatted CNPJ", `a\n11.223.344/5566-13`, `a\n<CNPJ>`, ""},
+		{"CNPJ without dots", `a\nAB12CD34/EF56-02`, `a\n<CNPJ>`, ""},
+		{"unformatted with a keyword", `CPF:\n12345678909`, `CPF:\n<CPF>`, ""},
+		{"unformatted without a keyword", `a\n12345678909`, `a\n12345678909`, `a\n<CPF>`},
+		{"list in a column", `cpf\n12345678909\n98765432100\n31415926590\n12345678909`, `cpf\n<CPF>\n<CPF>\n<CPF>\n<CPF>`, ""},
+		{"email", `a\nana@example.com`, `a\n<EMAIL>`, ""},
+		{"other escape letters are letters", `a\x123.456.789-09`, `a\x123.456.789-09`, ""},
+		{"the letter without a backslash", `a n123.456.789-09`, `a n123.456.789-09`, ""},
+		{"a backslash alone is a boundary", `C:\123.456.789-09`, `C:\<CPF>`, ""},
+		{"a value starting with an escape letter", `C:\new12345678901`, `C:\new12345678901`, ""},
+	})
 }
 
 func TestFind(t *testing.T) {

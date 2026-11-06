@@ -13,19 +13,25 @@
 //
 // # What is detected
 //
-// CPF is recognized as DDD.DDD.DDD-DD (formatted), DDDDDDDDD-DD or DDDDDDDDDDD (unformatted). CNPJ is
-// recognized as XX.XXX.XXX/XXXX-DD or XXXXXXXX/XXXX-DD (formatted) or XXXXXXXXXXXXDD (unformatted), where
-// X is a digit or a letter (the alphanumeric CNPJ, in either case) and D a digit; the second CNPJ form
-// counts as unformatted when it has lowercase letters. Every candidate must have valid check digits, must
-// not touch a letter or digit on either side, and must not continue a decimal number. Email addresses are
-// recognized by structure. The full contract, with sources and limitations, is in docs/spec/v0.1.md.
+// CPF is recognized as DDD.DDD.DDD-DD (formatted), DDDDDDDDD-DD (partially formatted, treated as
+// unformatted) or DDDDDDDDDDD (unformatted). CNPJ is recognized as XX.XXX.XXX/XXXX-DD or XXXXXXXX/XXXX-DD
+// (formatted) or XXXXXXXXXXXXDD (unformatted), where X is a digit or a letter (the alphanumeric CNPJ, in
+// either case) and D a digit; the second CNPJ form counts as unformatted when it has lowercase letters.
+// Every candidate must have valid check digits, must not touch a letter or digit on either side, and must
+// not continue a decimal number. Email addresses are recognized by structure. The full contract, with
+// sources and limitations, is in docs/spec/v0.1.md.
 //
 // # Policies
 //
 // Valid check digits alone are weak evidence for unformatted numbers: one in a hundred arbitrary 11-digit
-// numbers has valid CPF check digits. Under the default Balanced policy, unformatted identifiers are
-// redacted only when the entity's keyword ("cpf" or "cnpj", in any case) appears in the 32 bytes before
-// them; formatted identifiers are redacted whenever their check digits are valid. Strict redacts every
+// numbers has valid CPF check digits. Under the default Balanced policy, formatted identifiers are redacted
+// whenever their check digits are valid, and unformatted ones only with context:
+//
+//	CPF: 12345678909                the keyword ("cpf" or "cnpj", in any case) in the 32 bytes before
+//	12345678909 é meu CPF           the keyword after, in the same sentence and not labeling something else
+//	CPFs: 12345678909, 98765432100  a list, whose values share the context of one keyword
+//
+// Without context, as in "order 12345678909" or "id=12345678909 cpf=ok", they are kept. Strict redacts every
 // valid candidate, accepting more false positives.
 //
 // # Reversible sessions

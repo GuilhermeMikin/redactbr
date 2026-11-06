@@ -3,6 +3,7 @@ package redactbr
 import (
 	"cmp"
 	"slices"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -10,8 +11,8 @@ import (
 	"github.com/GuilhermeMikin/redactbr/internal/cpf"
 )
 
-// contextWindow is how many bytes before an unformatted candidate are searched for its keyword under the
-// Balanced policy.
+// contextWindow is how many bytes around an unformatted candidate are searched for its keyword under the
+// Balanced policy, and how far apart two values of a list can be.
 const contextWindow = 32
 
 const (
@@ -39,10 +40,11 @@ func (r *Redactor) find(s string) []Match {
 	return resolveOverlaps(append(ids, emails...))
 }
 
-// findIdentifiers returns the CPF and CNPJ matches in s. emails are the email matches, sorted; a '.'
-// right after one of them, or after an identifier, separates values and is not a decimal point.
+// findIdentifiers returns the CPF and CNPJ matches in s, sorted. emails are the email matches, sorted; a
+// '.' right after one of them, or after an identifier, separates values and is not a decimal point.
 func (r *Redactor) findIdentifiers(s string, emails []Match) []Match {
 	var ms []Match
+	var run valueRun
 	lastEnd, e := -1, 0
 	followsMatch := func(pos int) bool {
 		for e < len(emails) && emails[e].End < pos {
@@ -59,11 +61,19 @@ func (r *Redactor) findIdentifiers(s string, emails []Match) []Match {
 		for j < len(s) && isASCIIAlnum(s[j]) {
 			j++
 		}
-		if mayStartIdentifier(s, i, j) && leftBoundary(s, i, followsMatch(i-1)) {
-			if m, ok := r.identifierAt(s, i); ok {
-				ms = append(ms, m)
-				lastEnd = m.End
-				i = m.End
+		if mayStart, escaped := mayStartIdentifier(s, i, j), followsEscape(s, i); mayStart || escaped {
+			var c candidate
+			var ok bool
+			if mayStart && leftBoundary(s, i, followsMatch(i-1)) {
+				c, ok = r.candidateAt(s, i)
+			}
+			if !ok && escaped && mayStartIdentifier(s, i+1, j) {
+				c, ok = r.candidateAt(s, i+1)
+			}
+			if ok && (r.policy == Strict || run.redacts(s, c, &ms)) {
+				ms = append(ms, c.Match)
+				lastEnd = c.End
+				i = c.End
 				continue
 			}
 		}
@@ -71,7 +81,58 @@ func (r *Redactor) findIdentifiers(s string, emails []Match) []Match {
 		// boundary.
 		i = j
 	}
+	if run.reachedBack {
+		slices.SortFunc(ms, compareOffsets)
+	}
 	return ms
+}
+
+// A candidate has a recognized shape, clean boundaries and valid check digits. Whether it is redacted is up
+// to the policy.
+type candidate struct {
+	Match
+	formatted bool
+}
+
+func (c candidate) keyword() string {
+	if c.Entity == CNPJ {
+		return cnpjKeyword
+	}
+	return cpfKeyword
+}
+
+// valueRun is what the Balanced policy remembers during a scan: the current run of valid values of one
+// entity, each at most contextWindow bytes after the previous one. A run is how values of a list share the
+// context of one keyword.
+type valueRun struct {
+	entity      Entity
+	end         int     // where the last value of the run ends
+	context     bool    // whether the last value of the run has context
+	kept        []Match // values of the run that were not redacted
+	reachedBack bool    // whether any value was added to the matches out of order
+}
+
+// redacts applies the Balanced policy to c. A keyword after c also covers the values kept earlier in the
+// run, which are added to ms out of order.
+func (run *valueRun) redacts(s string, c candidate, ms *[]Match) bool {
+	if c.Entity != run.entity || c.Start < run.end || c.Start-run.end > contextWindow {
+		run.entity, run.context, run.kept = c.Entity, false, run.kept[:0]
+	}
+	run.end = c.End
+	keyword := c.keyword()
+	before := run.context || keywordBefore(s, c.Start, keyword)
+	after := !before && keywordAfter(s, c.End, keyword)
+	run.context = before || after
+	if after && len(run.kept) > 0 {
+		*ms = append(*ms, run.kept...)
+		run.kept = run.kept[:0]
+		run.reachedBack = true
+	}
+	if !run.context && !c.formatted {
+		run.kept = append(run.kept, c.Match)
+		return false
+	}
+	return true
 }
 
 // mayStartIdentifier is a cheap filter on the run of ASCII letters and digits s[i:j]: every recognized
@@ -95,27 +156,20 @@ func mayStartIdentifier(s string, i, j int) bool {
 	return false
 }
 
-// identifierAt reports the CNPJ or CPF that starts at s[i], if any, applying shape, boundary, check-digit
-// and policy rules in that order.
-func (r *Redactor) identifierAt(s string, i int) (Match, bool) {
+// candidateAt reports the CNPJ or CPF candidate that starts at s[i], if any, applying shape, right boundary
+// and check-digit rules in that order. The left boundary is up to the caller.
+func (r *Redactor) candidateAt(s string, i int) (candidate, bool) {
 	if !r.noCNPJ {
-		if end, c, formatted, ok := scanCNPJ(s, i); ok && rightBoundary(s, end) && cnpj.Valid(c) &&
-			r.accept(s, i, formatted, cnpjKeyword) {
-			return Match{Entity: CNPJ, Start: i, End: end}, true
+		if end, c, formatted, ok := scanCNPJ(s, i); ok && rightBoundary(s, end) && cnpj.Valid(c) {
+			return candidate{Match{Entity: CNPJ, Start: i, End: end}, formatted}, true
 		}
 	}
 	if !r.noCPF {
-		if end, d, formatted, ok := scanCPF(s, i); ok && rightBoundary(s, end) && cpf.Valid(d) &&
-			r.accept(s, i, formatted, cpfKeyword) {
-			return Match{Entity: CPF, Start: i, End: end}, true
+		if end, d, formatted, ok := scanCPF(s, i); ok && rightBoundary(s, end) && cpf.Valid(d) {
+			return candidate{Match{Entity: CPF, Start: i, End: end}, formatted}, true
 		}
 	}
-	return Match{}, false
-}
-
-// accept applies the detection policy to a candidate whose check digits are valid.
-func (r *Redactor) accept(s string, start int, formatted bool, keyword string) bool {
-	return formatted || r.policy == Strict || hasKeyword(s, start, keyword)
+	return candidate{}, false
 }
 
 // scanCPF matches a CPF shape at s[i]: DDD.DDD.DDD-DD (formatted), DDDDDDDDD-DD or DDDDDDDDDDD
@@ -212,6 +266,12 @@ func leftBoundary(s string, i int, dotFollowsMatch bool) bool {
 	return !decimalTail
 }
 
+// followsEscape reports whether s[i] is the letter of an escape sequence written out as two characters, as in
+// JSON strings and logs: a line break must not glue what follows it to its letter.
+func followsEscape(s string, i int) bool {
+	return i > 0 && s[i-1] == '\\' && (s[i] == 'n' || s[i] == 'r' || s[i] == 't')
+}
+
 // rightBoundary reports whether a candidate may end at s[end]: the next rune must not be a letter or digit,
 // and must not be a '.' followed by an ASCII digit.
 func rightBoundary(s string, end int) bool {
@@ -226,22 +286,77 @@ func rightBoundary(s string, end int) bool {
 	return !decimalHead
 }
 
-// hasKeyword reports whether keyword (lowercase ASCII) occurs, in any case and possibly with dots between
-// its letters ("C.P.F."), in the contextWindow bytes before start.
-func hasKeyword(s string, start int, keyword string) bool {
+// keywordAt returns the length of keyword (lowercase ASCII) at the start of s, in any case and possibly with
+// dots between its letters ("C.P.F"), or 0 if it is not there.
+func keywordAt(s, keyword string) int {
+	k := 0
+	for l := range len(s) {
+		c := lowerASCII(s[l])
+		if c == keyword[k] {
+			k++
+			if k == len(keyword) {
+				return l + 1
+			}
+		} else if c != '.' || k == 0 {
+			return 0
+		}
+	}
+	return 0
+}
+
+// keywordBefore reports whether keyword occurs in the contextWindow bytes before start.
+func keywordBefore(s string, start int, keyword string) bool {
 	window := s[max(0, start-contextWindow):start]
 	for j := range len(window) {
-		k := 0
-		for l := j; l < len(window) && k < len(keyword); l++ {
-			c := lowerASCII(window[l])
-			if c == keyword[k] {
-				k++
-			} else if c != '.' || k == 0 {
-				break
-			}
-		}
-		if k == len(keyword) {
+		if lowerASCII(window[j]) == keyword[0] && keywordAt(window[j:], keyword) > 0 {
 			return true
+		}
+	}
+	return false
+}
+
+// keywordAfter reports whether keyword is about the value that ends at s[end]. It looks in the next
+// contextWindow bytes, up to the first digit (another number is closer to the keyword), line break,
+// backslash (an escape sequence) or sentence end, for the keyword as a word of its own that does not label
+// what comes next. The rule is stricter than keywordBefore because labels precede values: a keyword after a
+// value is often the label of the next field, as in "id=12345678909 cpf=98765432100".
+func keywordAfter(s string, end int, keyword string) bool {
+	window := s[end:min(len(s), end+contextWindow)]
+	for j := range len(window) {
+		switch b := window[j]; {
+		case lowerASCII(b) == keyword[0]:
+			if n := keywordAt(window[j:], keyword); n > 0 {
+				to := end + j + n
+				if to < len(s) && lowerASCII(s[to]) == 's' {
+					to++ // plural
+				}
+				if !touchesWord(s, end+j, to) && !labelsNext(s, to) {
+					return true
+				}
+			}
+		case isASCIIDigit(b), b == '\n', b == '\r', b == '\\', b == '.', b == ';', b == '!', b == '?':
+			return false
+		}
+	}
+	return false
+}
+
+// touchesWord reports whether s[from:to] has a letter, digit, combining mark or '_' right next to it.
+func touchesWord(s string, from, to int) bool {
+	before, _ := utf8.DecodeLastRuneInString(s[:from])
+	after, _ := utf8.DecodeRuneInString(s[to:])
+	return before == '_' || after == '_' || isWordRune(before) || isWordRune(after)
+}
+
+// labelsNext reports whether what follows a keyword at s[i] makes it a label: a ':', '=' or digit, possibly
+// after spaces and opening punctuation ("cpf: …", `"cpf":…`, "cpf=…", "cpf 123…", "cpf (123…").
+func labelsNext(s string, i int) bool {
+	for limit := min(len(s), i+contextWindow); i < limit; i++ {
+		switch b := s[i]; {
+		case b == ':' || b == '=' || isASCIIDigit(b):
+			return true
+		case strings.IndexByte(" \t\"'-([#", b) < 0:
+			return false
 		}
 	}
 	return false
@@ -250,12 +365,7 @@ func hasKeyword(s string, start int, keyword string) bool {
 // resolveOverlaps sorts ms by offset and drops every match that overlaps an earlier one. Between matches
 // that start at the same offset, the longest wins.
 func resolveOverlaps(ms []Match) []Match {
-	slices.SortFunc(ms, func(a, b Match) int {
-		if a.Start != b.Start {
-			return cmp.Compare(a.Start, b.Start)
-		}
-		return cmp.Compare(b.End, a.End)
-	})
+	slices.SortFunc(ms, compareOffsets)
 	out := ms[:0]
 	end := 0
 	for _, m := range ms {
@@ -266,6 +376,13 @@ func resolveOverlaps(ms []Match) []Match {
 		end = m.End
 	}
 	return out
+}
+
+func compareOffsets(a, b Match) int {
+	if a.Start != b.Start {
+		return cmp.Compare(a.Start, b.Start)
+	}
+	return cmp.Compare(b.End, a.End)
 }
 
 // isWordRune reports whether r continues a word: a letter, digit or combining mark in any script. The

@@ -53,6 +53,9 @@ func localStart(s string, floor, at int) (int, bool) {
 		}
 		j -= size
 	}
+	if j < at && followsEscape(s, j) {
+		j++ // the letter of a written-out line break or tab is not part of the address
+	}
 	// Leading dots and apostrophes are punctuation ("see:...ana@example.com", "'ana@example.com'").
 	for j < at && (s[j] == '.' || s[j] == '\'') {
 		j++

@@ -12,8 +12,9 @@ notice.
 - Detection of CPF (formatted and unformatted), numeric CNPJ and alphanumeric CNPJ (IN RFB 2.229/2024),
   with check digits validated against the Receita Federal's published algorithms and reference vectors.
 - Email detection (a pragmatic subset of RFC 5322 with the RFC 5321 length limits).
-- Detection policies: `Balanced` (default; unformatted values need the entity's keyword within the 32
-  bytes before them) and `Strict`.
+- Detection policies: `Balanced` (default; unformatted values need context: the entity's keyword within the
+  32 bytes before them, the keyword about them within the 32 bytes after them, or a list that shares a
+  keyword) and `Strict`.
 - `Redactor` with `New`, `WithPolicy`, `WithEntities` and `WithMaxSessionValues`; `Find`, which reports
   entities and offsets without values; typed replacement with `Redact` (`<CPF>`, `<CNPJ>`, `<EMAIL>`).
 - Reversible sessions: `Session.Redact` issues `<ENTITY_id>` tokens with 50-bit random ids, reserves
@@ -36,3 +37,7 @@ Found during development and fixed before any release:
 - Sessions kept whole inputs in memory through substrings of stored values; they now store copies.
 - `CPF nº123.456.789-09` was not detected; lowercase URL path segments shaped like a CNPJ without dots
   were redacted under the default policy.
+- Values right after a line break or tab written out as two characters, as in JSON strings and logs
+  (`"lista:\n123.456.789-09"`), were not detected, even formatted: the letter of the escape glued to them.
+- In a list after one keyword (`CPFs: a, b, c, d`), values past the 32-byte window were not redacted.
+- `12345678909 é meu CPF` was not redacted: only a keyword before a value counted.

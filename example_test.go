@@ -30,7 +30,7 @@ func ExampleWithPolicy() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(balanced.Redact(text)) // no "cpf" keyword before the order number
+	fmt.Println(balanced.Redact(text)) // the "cpf" keyword labels the second number, not the order number
 	fmt.Println(strict.Redact(text))
 	// Output:
 	// order 98765432100 / cpf <CPF>

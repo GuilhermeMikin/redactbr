@@ -61,8 +61,8 @@ across chunks). `go run ./examples/llm-stream` needs no API key and no network.
 
 | Entity | Recognized forms | Validation | Redacted under the default policy |
 |---|---|---|---|
-| CPF | `123.456.789-09`, `123456789-09`, `12345678909` | Official check digits | Formatted: yes. Unformatted: only after the keyword `cpf` |
-| CNPJ (numeric) | `11.223.344/5566-13`, `11223344/5566-13`, `11223344556613` | Official check digits | Formatted: yes. Unformatted: only after the keyword `cnpj` |
+| CPF | `123.456.789-09`, `123456789-09`, `12345678909` | Official check digits | Formatted: yes. Unformatted: only with the keyword `cpf` nearby |
+| CNPJ (numeric) | `11.223.344/5566-13`, `11223344/5566-13`, `11223344556613` | Official check digits | Formatted: yes. Unformatted: only with the keyword `cnpj` nearby |
 | CNPJ (alphanumeric) | `AB.12C.D34/EF56-02`, `AB12CD34/EF56-02`, `AB12CD34EF5602`, either case | Official check digits (IN RFB 2.229/2024) | Same as numeric; `ab12cd34/ef56-02` (lowercase, no dots) counts as unformatted |
 | Email | `ana.silva@example.com` (pragmatic RFC 5322 subset) | Structure | Always |
 
@@ -84,12 +84,19 @@ check digits, and LLM and agent traffic is full of order numbers, ids and timest
 - **Formatted** values (`123.456.789-09`, `11.223.344/5566-13`) are redacted whenever their check digits
   are valid and they are not glued to letters or digits (`CPF123.456.789-09` is not detected;
   `CPF nº123.456.789-09` is).
-- **Unformatted** values (`12345678909`) are redacted under the default `Balanced` policy **only when the
-  entity's keyword appears in the 32 bytes before them** (`CPF:`, `cpf=`, `"customerCpf":`, `CPF/CNPJ`, in
-  any case, also `C.P.F.`). A bare unformatted value without a nearby keyword is **not** redacted by
-  default.
-- `Strict` redacts every value with valid check digits, formatted or not, and accepts the false positives
-  that come with it:
+- **Unformatted** values (`12345678909`), and the partially formatted `123456789-09`, are redacted under the
+  default `Balanced` policy **only with context**. A bare value without it is **not** redacted by default.
+
+| Text | Balanced | Why |
+|---|---|---|
+| `CPF: 12345678909` | `CPF: <CPF>` | keyword in the 32 bytes before (`cpf=`, `"customerCpf":`, `CPF/CNPJ`, in any case, also `C.P.F.`) |
+| `12345678909 é meu CPF` | `<CPF> é meu CPF` | keyword after, in the same sentence and line |
+| `CPFs: 12345678909, 98765432100, …` | `CPFs: <CPF>, <CPF>, …` | a list shares its keyword |
+| `id=12345678909 cpf=98765432100` | `id=12345678909 cpf=<CPF>` | `cpf=` labels what follows it, not the `id` |
+| `order 12345678909 shipped` | unchanged | no context |
+
+`Strict` redacts every value with valid check digits, formatted or not, and accepts the false positives that
+come with it:
 
 ```go
 strict, err := redactbr.New(redactbr.WithPolicy(redactbr.Strict))
@@ -167,7 +174,7 @@ RedactBR can support LGPD data-minimization measures; using it does not make a s
 - Unformatted values without a nearby keyword are not redacted under the default policy (see above).
 - Not recognized: digits separated by spaces or partial punctuation (`123 456 789 09`, `123.456789-09`),
   values glued to a word (`CPF123.456.789-09`), full-width digits, values with invisible characters
-  inside, numbers in words.
+  inside, percent-encoded text (`cpf%3D12345678909`), numbers in words.
 - Email: no quoted local parts, IP literals or single-label domains. Typed or tokenized, an email loses
   its domain too.
 - Only CPF, CNPJ and email. Other Brazilian identifiers (CNH, PIS, CNS, título de eleitor, phone numbers,

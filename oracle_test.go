@@ -34,22 +34,56 @@ var oracleShapes = []struct {
 }
 
 var oracleKeywords = map[redactbr.Entity]*regexp.Regexp{
-	redactbr.CPF:  regexp.MustCompile(`c\.*p\.*f`),
-	redactbr.CNPJ: regexp.MustCompile(`c\.*n\.*p\.*j`),
+	redactbr.CPF:  regexp.MustCompile(`(?i)c\.*p\.*f`),
+	redactbr.CNPJ: regexp.MustCompile(`(?i)c\.*n\.*p\.*j`),
+}
+
+var (
+	oracleGapStop = regexp.MustCompile(`[0-9\n\r.;!?\\]`)
+	oracleLabel   = regexp.MustCompile(`^[ \t"'\-(\[#]*[:=0-9]`)
+)
+
+func oracleIsWord(r rune) bool {
+	return r != 'ª' && r != 'º' && (unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r))
+}
+
+// oracleKeywordAfter restates "Keyword after" in spec §7.
+func oracleKeywordAfter(s string, end int, entity redactbr.Entity) bool {
+	window := s[end:min(len(s), end+32)]
+	for _, m := range oracleKeywords[entity].FindAllStringIndex(window, -1) {
+		if oracleGapStop.MatchString(window[:m[0]]) {
+			return false
+		}
+		from, to := end+m[0], end+m[1]
+		if to < len(s) && (s[to] == 's' || s[to] == 'S') {
+			to++
+		}
+		left, _ := utf8.DecodeLastRuneInString(s[:from])
+		right, _ := utf8.DecodeRuneInString(s[to:])
+		if left == '_' || right == '_' || oracleIsWord(left) || oracleIsWord(right) {
+			continue
+		}
+		if !oracleLabel.MatchString(s[to:min(len(s), to+32)]) {
+			return true
+		}
+	}
+	return false
+}
+
+type oracleValue struct {
+	redactbr.Match
+	context, accepted bool
 }
 
 func oracleFind(s string, strict bool) []redactbr.Match {
-	isWord := func(r rune) bool {
-		return r != 'ª' && r != 'º' && (unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r))
-	}
 	isDigit := func(b byte) bool { return '0' <= b && b <= '9' }
-	var out []redactbr.Match
+	var valid []oracleValue // every valid candidate so far, whether it was accepted or not
+	lastAccepted := -1      // where the last accepted value ends
 	end := 0
 	for i := 0; i < len(s); i++ {
 		if i < end {
 			continue // inside an accepted match
 		}
-		afterMatch := len(out) > 0 && out[len(out)-1].End == i-1
 		for _, sh := range oracleShapes {
 			m := sh.re.FindString(s[i:])
 			if m == "" {
@@ -58,13 +92,14 @@ func oracleFind(s string, strict bool) []redactbr.Match {
 			stop := i + len(m)
 			if i > 0 {
 				r, n := utf8.DecodeLastRuneInString(s[:i])
-				if isWord(r) || (r == '.' && i-n > 0 && isDigit(s[i-n-1]) && !afterMatch) {
+				escape := (r == 'n' || r == 'r' || r == 't') && i-n > 0 && s[i-n-1] == '\\'
+				if (oracleIsWord(r) && !escape) || (r == '.' && i-n > 0 && isDigit(s[i-n-1]) && lastAccepted != i-1) {
 					continue
 				}
 			}
 			if stop < len(s) {
 				r, n := utf8.DecodeRuneInString(s[stop:])
-				if isWord(r) || (r == '.' && stop+n < len(s) && isDigit(s[stop+n])) {
+				if oracleIsWord(r) || (r == '.' && stop+n < len(s) && isDigit(s[stop+n])) {
 					continue
 				}
 			}
@@ -82,12 +117,36 @@ func oracleFind(s string, strict bool) []redactbr.Match {
 					continue
 				}
 			}
-			window := strings.ToLower(s[max(0, i-32):i])
-			if sh.formatted || strict || oracleKeywords[sh.entity].MatchString(window) {
-				out = append(out, redactbr.Match{Entity: sh.entity, Start: i, End: stop})
+
+			cur := oracleValue{Match: redactbr.Match{Entity: sh.entity, Start: i, End: stop}}
+			inRun := func(prev, next oracleValue) bool {
+				return prev.Entity == next.Entity && next.Start >= prev.End && next.Start-prev.End <= 32
+			}
+			before := oracleKeywords[sh.entity].MatchString(s[max(0, i-32):i]) ||
+				(len(valid) > 0 && valid[len(valid)-1].context && inRun(valid[len(valid)-1], cur))
+			after := !before && oracleKeywordAfter(s, stop, sh.entity)
+			cur.context = before || after
+			if after {
+				// The keyword also reaches back over the values of this run.
+				next := cur
+				for k := len(valid) - 1; k >= 0 && inRun(valid[k], next); k-- {
+					valid[k].accepted = true
+					next = valid[k]
+				}
+			}
+			cur.accepted = sh.formatted || strict || cur.context
+			valid = append(valid, cur)
+			if cur.accepted {
 				end = stop
+				lastAccepted = stop
 				break // shapes are listed longest first; a shorter one at the same offset cannot win
 			}
+		}
+	}
+	var out []redactbr.Match
+	for _, v := range valid {
+		if v.accepted {
+			out = append(out, v.Match)
 		}
 	}
 	return out
@@ -99,6 +158,8 @@ func randomText(rng *rand.Rand) string {
 	pieces := []string{
 		"0", "1", "5", "9", "a", "X", "z", ".", "-", "/", " ", ",", "_", "é", "\u00a0", "\xff",
 		"cpf", "CNPJ", "Cpf:", "cnpj=", "C.P.F.", "c.n.p.j", "nº", "ª", "\u0301", "/", "123", "456.", "0001", "-09",
+		"\n", "\r", `\n`, `\t`, `\x`, "\\", ";", "!", "?", ":", "=", "\"", "'", "(", ")", "[", "#", "\t",
+		" cpf", " CNPJ", " CPFs", " cnpjs", " (cpf)", " é meu CPF", " é o cnpj", "_cpf", "cpf_", " de ",
 	}
 	var b strings.Builder
 	for range rng.IntN(24) {
@@ -193,6 +254,9 @@ func FuzzFindMatchesOracle(f *testing.F) {
 	for _, s := range []string{
 		"CPF 123.456.789-09", "cpf 12345678909", "1.123.456.789-09", "12345678909.5", "cnpj ab12cd34ef5602",
 		"AB12CD34/EF56-02", "x12345678909", "cpf_12345678909", "11.223.344/5566-13,987.654.321-00",
+		"12345678909 é meu CPF", "id=12345678909 cpf=98765432100", `{"id":"12345678909","cpf":"x"}`,
+		"12345678909, 987.654.321-00, 98765432100 são CPFs", "CPFs: 12345678909, 98765432100, 31415926590, 12345678909",
+		`a\n123.456.789-09`, `CPF:\t12345678909`, "ab12cd34/ef56-02.ABC.DEF/0001-82 é o cnpj",
 	} {
 		f.Add(s)
 	}

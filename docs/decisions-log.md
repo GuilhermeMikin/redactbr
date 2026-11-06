@@ -211,3 +211,38 @@ An independent review (a separate agent, read-only, with reproductions) ran befo
   the manuals' covers disagree on the dates of the acts (nº 10: 19 and 25 May 2026; nº 9: 16 and 22 April
   2026), so this project cites them by number. The site's "version in production" page still lists 2.1.1;
   the rule's text is identical in both versions.
+
+### D-026 Context after the value and across lists
+
+- `12345678909 é meu CPF` is redacted under Balanced now. The rule after a value is stricter than the rule
+  before it (spec §7): no digit, line break, backslash or sentence end in between; a word of its own; not the
+  label of what follows.
+- Why not the same substring window on both sides. On 36 hand-written sentences whose number has valid check
+  digits (16 where the keyword is about the number, 20 where it is not), a symmetric 32-byte window accepted
+  15 of the 16 and **all 20** of the others, among them `id=… cpf=…`, `{"id":"…","cpf":"…"}`, `pedido … cpf
+  …` and the next line of a log. The adopted rule accepts 15 of the 16 and 1 of the 20. What it gets wrong:
+  it keeps `12345678909 é meu CPF: segue` (the colon reads as a label) and it redacts `pedido 12345678909 do
+  cliente sem CPF`, which no rule on words can tell apart. These sentences show the shapes that matter; they
+  are not a measurement on real traffic, and a wrong acceptance needs the number to have valid check digits
+  (one in a hundred).
+- A list shares its keyword: a value within 32 bytes after a value of the same entity with context has
+  context too, and a keyword after a value also reaches back over the values before it in the same run.
+  Before this, `CPFs: a, b, c, d` left `d` in the clear, past the window, and a column under a `cpf` header
+  leaked from its fourth row on. A false positive here also needs valid check digits, for each value, so
+  lists add little risk. A formatted value without a keyword does not start a list: it says nothing about
+  the number after it.
+- The window stays at 32 bytes and fixed. The list rule removed the case that argued for a larger one.
+- Cost, measured against the previous commit with alternating runs on the development machine: about 12% on
+  mixed text under Balanced (about 100 ns per detected value, since each now looks for context) and none
+  beyond noise on text without personal data or under Strict.
+- Reversible, but it changes what is redacted, so it should settle before `v0.1.0`.
+
+### D-027 Escape sequences written out as two characters
+
+- `"lista:\n123.456.789-09"` was not redacted, even though the value is formatted: `n123` is a run of letters
+  and digits, so the value had no left boundary. Tool results often reach models as JSON and the README
+  tells callers to send them through the session, so this was a real leak under the default policy.
+- The letter of `\n`, `\r` or `\t` no longer glues a value to it, and an email local part starts after it.
+  Other escapes are not covered: `\u00a0` before a value and `\/` inside a CNPJ, which JSON allows (RFC 8259
+  §7, accessed 2026-11-06), stay undetected; JSON-aware redaction is planned for v0.2.
+- A false positive needs a path such as `C:\new…` whose remainder is a whole candidate with valid check digits.

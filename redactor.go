@@ -26,8 +26,9 @@ type Policy int
 
 const (
 	// Balanced redacts formatted identifiers (such as 123.456.789-09) whose check digits are valid, and
-	// unformatted ones (such as 12345678909) only when the entity's keyword ("cpf" or "cnpj", in any case)
-	// appears in the 32 bytes before them. It is the default.
+	// unformatted ones (such as 12345678909) only with context: the entity's keyword ("cpf" or "cnpj", in any
+	// case) in the 32 bytes before them, as a word about them in the 32 bytes after them, or a list they share
+	// with a value that has context. It is the default.
 	Balanced Policy = iota
 	// Strict redacts every candidate whose check digits are valid and whose boundaries are clean, formatted
 	// or not, with or without context. It accepts more false positives, such as order numbers or
