@@ -1,6 +1,7 @@
 # ADR-0004: Reversible token session safety
 
-- **Status:** accepted
+- **Status:** accepted; the token format is provisional until token fidelity is measured
+  ([docs/token-fidelity.md](../token-fidelity.md))
 - **Date:** 2026-10-30; amended 2026-11-06 (accidents and adversaries stated apart)
 
 ## Context
@@ -29,8 +30,8 @@ Tokens also have to be easy for models to copy and cheap to parse in a stream.
    session's tokens, and ids are independent across sessions.
 3. **Reservation:** every well-formed token in the input of `Session.Redact` that the session has not
    issued is reserved before any new token is issued, and the session never issues a reserved string.
-   This makes the pre-existing look-alike case impossible for text that passes through the session, not
-   just improbable. Issued tokens found in input (history sent again) are left alone.
+   This makes the pre-existing look-alike case impossible for text that passes through the session whole, in
+   one call, not just improbable. Issued tokens found in input (history sent again) are left alone.
 4. **Stable tokens:** equal values (normalized) share one token for the session's lifetime; restoration
    returns the value as first seen.
 5. **Bounded state:** a capacity (default 10,000 values plus reservations) with `ErrSessionFull`; a
@@ -59,13 +60,13 @@ Tokens also have to be easy for models to copy and cheap to parse in a stream.
 
 ## Alternatives considered
 
-- **Sequential tokens (`<CPF_1>`):** easiest for models, but collide with user text, across sessions and
+- **Sequential tokens (`<CPF_1>`):** expected to be the easiest for models (not measured), but collide with user text, across sessions and
   with tokens leaked from other contexts.
 - **Session tag plus counter (`<CPF_1_k7q2>`):** readable, but one leaked token reveals the tag needed to
   forge the others, and tokens get longer.
 - **HMAC of the value with a session key:** deterministic and verifiable, but longer, and with a shared
   key it links values across sessions.
 - **Escaping look-alikes in the input:** changes user text and relies on the model preserving the escape.
-- **Authenticated tokens (MAC suffix):** stronger against forgery, but much longer tokens that models copy
-  less reliably; forgery is already bounded by the issued-set check, and the real boundary is the session
+- **Authenticated tokens (MAC suffix):** stronger against forgery, but much longer tokens, which we expect models
+  to copy less reliably (not measured); forgery is already bounded by the issued-set check, and the real boundary is the session
   scope.

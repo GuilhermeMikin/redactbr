@@ -36,7 +36,8 @@
 //
 // # Reversible sessions
 //
-// A Session replaces values with tokens that an LLM can copy, and restores them in its answer:
+// A Session replaces values with tokens meant to be copied by an LLM, and restores them in its answer. Whether
+// real models copy them faithfully has not been measured yet, and the token format may change before v0.1.0.
 //
 //	session := r.NewSession()
 //	prompt, err := session.Redact("My CPF is 123.456.789-09")
@@ -58,7 +59,9 @@
 // # Streaming
 //
 // Session.RestoreWriter restores tokens in a stream, such as an LLM response arriving in chunks, even when
-// a token is split across chunks. It holds back at most 17 bytes between writes:
+// a token is split across chunks. It holds back at most 17 bytes between writes. This is about output: redaction
+// takes whole strings, a value split across calls is not detected, and redacting a stream of input is not
+// implemented.
 //
 //	w := session.RestoreWriter(dst)
 //	for chunk := range chunks {

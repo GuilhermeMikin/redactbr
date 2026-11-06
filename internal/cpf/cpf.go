@@ -4,8 +4,8 @@
 // detection policy in package redactbr.
 //
 // The algorithm is the one the Receita Federal documents in the e-Financeira filing manual (Anexo II,
-// rule REGRA_VALIDA_CPF; see docs/spec/v0.1.md for the versions and URLs) and implements in the routine
-// TestaCPF of its public CPF status page
+// rule REGRA_VALIDA_CPF; see docs/spec/v0.1.md for the versions and URLs) and has written in the routine
+// TestaCPF, in a script that its public CPF status page loads
 // (https://servicos.receita.fazenda.gov.br/servicos/cpf/consultasituacao/funcoes03.js, accessed
 // 2026-11-06). In the form used here, the first check digit weighs the nine base digits 10 down to 2, the
 // second weighs the first ten digits 11 down to 2, and a remainder of 0 or 1 modulo 11 yields 0 (otherwise

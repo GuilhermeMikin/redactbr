@@ -11,15 +11,15 @@ notice.
 
 - Detection of CPF (formatted and unformatted), numeric CNPJ and alphanumeric CNPJ (IN RFB 2.229/2024),
   with check digits validated against the Receita Federal's published algorithms and reference vectors.
-- Email detection (a pragmatic subset of RFC 5322 with the RFC 5321 length limits).
+- Email detection (a pragmatic rule based on RFC 5322, with the RFC 5321 length limits).
 - Detection policies: `Balanced` (default; unformatted values need context: the entity's keyword within the
   32 bytes before them, the keyword about them within the 32 bytes after them, or a list that shares a
   keyword) and `Strict`.
 - `Redactor` with `New`, `WithPolicy`, `WithEntities` and `WithMaxSessionValues`; `Find`, which reports
   entities and offsets without values; typed replacement with `Redact` (`<CPF>`, `<CNPJ>`, `<EMAIL>`).
 - Reversible sessions: `Session.Redact` issues `<ENTITY_id>` tokens with 50-bit random ids, reserves
-  token-like input so it can never become restorable, and fails closed (`ErrSessionFull`, randomness
-  errors); `Session.Restore` restores only tokens the session issued.
+  token-like input it sees so that it never becomes restorable, and fails closed (`ErrSessionFull`);
+  `Session.Restore` restores only tokens the session issued.
 - Streaming restoration with `Session.RestoreWriter`, which restores tokens split across writes while
   holding back at most 17 bytes.
 - A `log/slog` handler, `Redactor.NewSlogHandler`, that redacts messages, keys and values. The name of a field

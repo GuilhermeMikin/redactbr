@@ -13,8 +13,8 @@ const (
 	maxDomainLen = 255
 )
 
-// findEmails appends email matches to ms. It recognizes a pragmatic subset of the RFC 5322 addr-spec:
-// a dot-atom local part made of ASCII letters, digits and "._%+-'" (and letters, digits and combining
+// findEmails appends email matches to ms. It follows the RFC 5322 addr-spec pragmatically, not strictly:
+// a local part made of ASCII letters, digits and "._%+-'" (and letters, digits and combining
 // marks of other scripts), "@", and a domain of at least two dot-separated labels made of letters, digits
 // and hyphens, whose last label has at least two letters (or is an "xn--" label). Quoted local parts,
 // comments and IP address literals are not recognized.

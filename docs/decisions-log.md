@@ -1,7 +1,7 @@
 # Decisions log
 
 Smaller decisions, verification notes and session context, oldest first. Decisions with long-term
-architectural weight live in [`docs/adr/`](adr/). Each entry says whether it is easy to reverse.
+architectural weight live in [`docs/adr/`](adr/). Later entries correct earlier ones instead of rewriting them.
 
 Dates are when the decision was recorded. "Accessed" dates are when a source was opened.
 
@@ -98,7 +98,7 @@ Dates are when the decision was recorded. "Accessed" dates are when a source was
   digit blocks it (decimals and dotted numbers). The comma stays a boundary so CSV columns remain
   detectable. Spec §6.
 
-### D-013 Context keyword window
+### D-013 Context keyword window (superseded by D-026)
 
 - Under Balanced, unformatted values need `cpf`/`cnpj` (ASCII case-insensitive substring) entirely within
   the 32 bytes before the value. Before-only and fixed size for v0.1; making it configurable or adding an
@@ -135,7 +135,7 @@ Dates are when the decision was recorded. "Accessed" dates are when a source was
 - Pragmatic subset of RFC 5322 addr-spec with RFC 5321 length limits (spec §10); no quoted local parts or
   IP literals. Default enabled.
 
-### D-019 slog deferred
+### D-019 slog deferred (superseded by D-030)
 
 - The `slog.Handler` was the first item on the cut list. It is deferred to keep this session's effort on
   the core guarantees; it goes into v0.3 integrations ("observability, slog first").
@@ -218,7 +218,8 @@ An independent review (a separate agent, read-only, with reproductions) ran befo
   before it (spec §7): no digit, line break, backslash or sentence end in between; a word of its own; not the
   label of what follows.
 - Why not the same substring window on both sides. On 36 hand-written sentences whose number has valid check
-  digits (16 where the keyword is about the number, 20 where it is not), a symmetric 32-byte window accepted
+  digits (16 where the keyword is about the number, 20 where it is not; they are in
+  `TestRuleAfterValueAgainstSymmetricWindow`), a symmetric 32-byte window accepted
   15 of the 16 and **all 20** of the others, among them `id=… cpf=…`, `{"id":"…","cpf":"…"}`, `pedido … cpf
   …` and the next line of a log. The adopted rule accepts 15 of the 16 and 1 of the 20. What it gets wrong:
   it keeps `12345678909 é meu CPF: segue` (the colon reads as a label) and it redacts `pedido 12345678909 do
@@ -226,7 +227,8 @@ An independent review (a separate agent, read-only, with reproductions) ran befo
   are not a measurement on real traffic, and a wrong acceptance needs the number to have valid check digits
   (one in a hundred).
 - A list shares its keyword: a value within 32 bytes after a value of the same entity with context has
-  context too, and a keyword after a value also reaches back over the values before it in the same run.
+  context too, and a keyword after a value also reaches back over the values before it in the same run. Each
+  entity has its own run, so a CNPJ between two CPFs does not end a list (D-033).
   Before this, `CPFs: a, b, c, d` left `d` in the clear, past the window, and a column under a `cpf` header
   leaked from its fourth row on. A false positive here also needs valid check digits, for each value, so
   lists add little risk. A formatted value without a keyword does not start a list: it says nothing about
@@ -243,8 +245,8 @@ An independent review (a separate agent, read-only, with reproductions) ran befo
   and digits, so the value had no left boundary. Tool results often reach models as JSON and the README
   tells callers to send them through the session, so this was a real leak under the default policy.
 - The letter of `\n`, `\r` or `\t` no longer glues a value to it, and an email local part starts after it.
-  Other escapes are not covered: `\u00a0` before a value and `\/` inside a CNPJ, which JSON allows (RFC 8259
-  §7, accessed 2026-11-06), stay undetected; JSON-aware redaction is planned for v0.2.
+  Other escapes are not covered: `\u00a0` before a value and `\/` inside a CNPJ, which JSON allows
+  ([RFC 8259 §7](https://www.rfc-editor.org/rfc/rfc8259), accessed 2026-11-06), stay undetected; JSON-aware redaction is planned for v0.2.
 - A false positive needs a path such as `C:\new…` whose remainder is a whole candidate with valid check digits.
 
 ### D-028 Review of the reversible tokens
@@ -279,7 +281,8 @@ the code, with new tests and mutation checks.
 - Sampling parameters are left out, since API version `2026-10-21` of the Claude API rejects them and a pipeline
   gets the default anyway. No fallback model is configured, so that a run measures the model it names.
 - A run is capped (`-max-requests`), plain HTTP is refused except on localhost, redirects are not followed (a
-  custom key header would follow them), and the key appears in no report.
+  custom key header would follow them: `net/http` drops only sensitive headers such as `Authorization` on a
+  redirect to another domain, <https://pkg.go.dev/net/http>, accessed 2026-11-06), and the key appears in no report.
 
 ### D-030 `slog` handler in v0.1
 
@@ -321,7 +324,8 @@ Changed: formatting a dereferenced `Session` no longer prints its contents (D-02
 now says it reports positions. `RestoreWriter` is checked at compile time to be an `io.WriteCloser`.
 
 Compatibility risks that remain before `v0.1.0`: the token grammar (D-029); adding fields to `Match` would break
-callers using unkeyed literals, which Go's compatibility promise allows; and the policy rules in spec §7 change what
+callers using unkeyed literals, which Go's own compatibility promise allows for its library
+(<https://go.dev/doc/go1compat>, accessed 2026-11-06); and the policy rules in spec §7 change what
 is redacted, so tightening them after the release counts as a behavior change.
 
 ### D-032 One pass over email domains
@@ -330,3 +334,24 @@ is redacted, so tightening them after the release counts as a behavior change.
   of `a@a.a.a…` was linear overall but ran at about 3 MB/s, so a large input cost far more CPU than its size
   suggests. It now checks labels as it passes them: about 98 MB/s on the same input, on the development machine.
 - Behavior is unchanged: `email_test.go` keeps the old rule as a reference for a differential test and a fuzz target.
+
+### D-033 Corrections from an independent review of the documents
+
+A separate agent checked the documents against the code and the sources before the first public release. Corrected:
+
+- **`TestaCPF` is not used by the public CPF page.** D-007, D-009 and D-025 (and the spec and the README, until now)
+  said the page validates with it. The script that defines it is loaded, but neither the page nor that script calls
+  it; the form's `ValidarDados` checks only that there are 11 digits (checked 2026-11-06). The rule itself does not
+  change: the e-Financeira manual gives the same digits. What rests on `TestaCPF` alone is rejecting `00000000000`.
+- **A value of the other entity ended a list,** though the spec said nothing of the kind, so `CPF/CNPJ: a, b, c`
+  left CPFs in the clear after a CNPJ. Each entity now has its own run. The spec's wording was the better rule.
+- **Claims stated more strongly than the evidence:** "never a wrong value" (a change can produce another issued
+  token, about *n*/2⁵⁰), "impossible" for look-alikes without "whole, in one call", "release candidate" for a
+  pre-alpha, IN RFB 2.229/2024 cited for the check digits though its text was not read, and "unmeasured" missing
+  from the godoc, the spec's grammar and ADR-0004.
+- **Limits that were only in part of the docs:** whole-string input, sessions that live in one process, and JSON
+  escapes that hide values even under Strict.
+- **`RestoreWriter` printed its buffer** when a value of it sat in an unexported struct field. Its state is now
+  behind a pointer, as in `Session`.
+- The sentences behind D-026 entered the test suite, so that comparison can be repeated. The claim that every entry
+  in this log says whether it is easy to reverse was removed: most did not.

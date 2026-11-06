@@ -63,8 +63,8 @@ across chunks) and [`examples/slog`](examples/slog) (redacted logs). None needs 
 |---|---|---|---|
 | CPF | `123.456.789-09`, `123456789-09`, `12345678909` | Official check digits | Formatted: yes. Unformatted: only with the keyword `cpf` nearby |
 | CNPJ (numeric) | `11.223.344/5566-13`, `11223344/5566-13`, `11223344556613` | Official check digits | Formatted: yes. Unformatted: only with the keyword `cnpj` nearby |
-| CNPJ (alphanumeric) | `AB.12C.D34/EF56-02`, `AB12CD34/EF56-02`, `AB12CD34EF5602`, either case | Official check digits (IN RFB 2.229/2024) | Same as numeric; `ab12cd34/ef56-02` (lowercase, no dots) counts as unformatted |
-| Email | `ana.silva@example.com` (pragmatic RFC 5322 subset) | Structure | Always |
+| CNPJ (alphanumeric) | `AB.12C.D34/EF56-02`, `AB12CD34/EF56-02`, `AB12CD34EF5602`, either case | Official check digits (Receita Federal's manual) | Same as numeric; `ab12cd34/ef56-02` (lowercase, no dots) counts as unformatted |
+| Email | `ana.silva@example.com` (a pragmatic rule based on RFC 5322) | Structure | Always |
 
 All values in this README are generated test values. The official CNPJ format uses uppercase letters. Detection
 accepts either case, because people type lowercase and it identifies the same company ([spec §8.1](docs/spec/v0.1.md#81-lowercase-alphanumeric-cnpj)).
@@ -86,8 +86,8 @@ A valid check digit alone is weak evidence: one in a hundred arbitrary 11-digit 
 check digits, and LLM and agent traffic is full of order numbers, ids and timestamps. So:
 
 - **Formatted** values (`123.456.789-09`, `11.223.344/5566-13`) are redacted whenever their check digits
-  are valid and they are not glued to letters or digits (`CPF123.456.789-09` is not detected;
-  `CPF nº123.456.789-09` is).
+  are valid and they are not glued to letters or digits or part of a dotted number (`CPF123.456.789-09` is not
+  detected; `CPF nº123.456.789-09` is).
 - **Unformatted** values (`12345678909`), and the partially formatted `123456789-09`, are redacted under the
   default `Balanced` policy **only with context**. A bare value without it is **not** redacted by default.
 
@@ -143,9 +143,10 @@ user ◄──RestoreWriter (chunk by chunk)── streamed answer ◄┘
 - Restore **decoded text**: write the model's text deltas to `RestoreWriter`, not the raw SSE or JSON body.
   A token split across events has framing between its halves, and JSON encoders may escape `<` and `>`
   (Go's `encoding/json` does by default), which hides the token.
-- A model may mangle a token (change its case, drop a character). Mangled tokens are left as they are —
-  the user sees the broken token, never a wrong value. Consider telling the model, in the system prompt,
-  to copy placeholders such as `<CPF_k7q2xm9pb3>` exactly.
+- A model may mangle a token (change its case, drop a character). Mangled tokens are left as they are, so the
+  user sees the broken token. A change would give a wrong value only by producing another token of the session,
+  which 50 random bits make negligible. Consider telling the model, in the system prompt, to copy placeholders
+  such as `<CPF_k7q2xm9pb3>` exactly.
 
 ## Security
 
@@ -156,15 +157,15 @@ numbers in words, invisible characters), data in images or PDFs, names and addre
 injection in general, or a compromised process. The full threat model is in the
 [specification](docs/spec/v0.1.md#16-threat-model).
 
-Guarantees you can rely on (each covered by tests, fuzzing or both):
+Guarantees you can rely on (covered by tests, fuzzing or both, except the linear scan, which benchmarks track):
 
 - **Fail closed.** Operations that can fail return an error and an empty result, never the unredacted
   input. A configuration that would detect nothing is rejected, and a zero `Redactor` detects everything.
 - **Against accidents and guessing.** A session restores only tokens it issued, matched byte for byte. Tokens from
   other sessions, forged or modified tokens, and token-like text that reached the session as input before it issued
-  that token are left verbatim, so a mangled token never turns into a wrong value. Ids are 50 random bits from
-  `crypto/rand`.
-- **Bounded work.** Detection is linear in the input; streaming restoration holds at most 17 bytes;
+  that token are left verbatim. Ids are 50 random bits from `crypto/rand`.
+- **Bounded work.** Detection is a linear scan plus a sort of the matches; streaming restoration holds at most
+  17 bytes;
   sessions have a capacity (`WithMaxSessionValues`, default 10,000) and store copies of values, never the
   inputs they came from.
 - **No values in diagnostics.** Errors, `Match`, `Session` and `RestoreWriter` print entities, offsets and
@@ -191,16 +192,19 @@ RedactBR can support LGPD data-minimization measures; using it does not make a s
 - Unformatted values without a nearby keyword are not redacted under the default policy (see above).
 - Not recognized: digits separated by spaces or partial punctuation (`123 456 789 09`, `123.456789-09`),
   values glued to a word (`CPF123.456.789-09`), full-width digits, values with invisible characters
-  inside, percent-encoded text (`cpf%3D12345678909`), numbers in words.
+  inside, percent-encoded text (`cpf%3D12345678909`), numbers in words. JSON escapes other than `\n`, `\r` and `\t`
+  hide a value even under `Strict` (`11.223.344\/5566-13`, a value right after `\f` or `\u00a0`).
 - Email: no quoted local parts, IP literals or single-label domains. Typed or tokenized, an email loses
   its domain too.
 - Only CPF, CNPJ and email. Other Brazilian identifiers (CNH, PIS, CNS, título de eleitor, phone numbers,
   CEP) and payment cards are planned, not implemented.
 - Input must be whole strings. Redacting a stream of input, and JSON-aware redaction, are planned.
+- Sessions live in the memory of one process. They do not survive a restart or move between replicas, and a new
+  session does not restore the tokens of an old one.
 - Token survival in real models has not been measured yet; [a harness is ready](docs/token-fidelity.md).
-- The CPF check-digit rule is the one the Receita Federal documents in its e-Financeira manual and uses in
-  its own validation routine. Those are official technical sources; a normative definition is still pending
-  (see the spec).
+- The CPF check-digit rule is the one the Receita Federal documents in its e-Financeira manual and has written in
+  a routine that its public CPF page loads. Those are official technical sources; a normative definition is still
+  pending (see the spec).
 
 ## Technical decisions
 
@@ -237,7 +241,7 @@ yours.
 
 ## Roadmap
 
-- **v0.1** — this release candidate: CPF, CNPJ (numeric and alphanumeric), email, typed replacement,
+- **v0.1** — in progress, pre-alpha: CPF, CNPJ (numeric and alphanumeric), email, typed replacement,
   sessions, streaming restoration, a `log/slog` handler.
 - **v0.2** — more Brazilian identifiers, payment cards, ambiguity resolution, JSON and tool-call arguments.
 - **v0.3** — CLI, `net/http` and gRPC middleware, OpenAI-compatible, Anthropic and MCP integrations, a

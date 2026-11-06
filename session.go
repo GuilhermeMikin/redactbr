@@ -29,8 +29,8 @@ const maxTokenAttempts = 8
 // shared across users. Random ids protect against collisions and guessing, not against someone who repeats
 // a token they saw; see docs/spec/v0.1.md.
 //
-// Use Redactor.NewSession to create a Session; the zero value is not usable. A Session is safe for
-// concurrent use by multiple goroutines.
+// Use Redactor.NewSession to create a Session; the zero value is not usable. A Session lives in memory and
+// cannot be exported, so it does not survive a restart. It is safe for concurrent use by multiple goroutines.
 type Session struct {
 	// Behind a pointer so that formatting a dereferenced Session, as in %+v, cannot print its contents.
 	*sessionState
@@ -74,8 +74,8 @@ func cryptoFill(b []byte) error {
 // will never issue them, so text that arrives looking like a token can never be restored into a value.
 // Tokens the session did issue (for example in conversation history sent again) are left as they are.
 //
-// On error, Redact returns an empty string and leaves the session unchanged; it never returns text with
-// values left in place.
+// Text must be whole: a value split across two calls is not detected. On error, Redact returns an empty string
+// and leaves the session unchanged; it never returns text with values left in place.
 func (s *Session) Redact(text string) (string, error) {
 	ms := s.r.find(text)
 	literals := tokenLiterals(text)

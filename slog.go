@@ -13,9 +13,9 @@ import (
 // the field's own name counts: neither the message nor other attributes are context for it.
 //
 // Strings and numbers are checked. Booleans, durations and times pass through. Any other value, such as an
-// error or a struct, is logged as a string: its redacted %+v text. The handler cannot see inside an arbitrary
-// value, and a JSON handler would otherwise marshal fields that the text does not show. Structured values
-// therefore lose their structure in the log.
+// error or a struct, is logged as a string: its redacted %+v text (%v for errors). The handler cannot see inside
+// an arbitrary value, and a JSON handler would otherwise marshal fields that the text does not show. Structured
+// values therefore lose their structure in the log.
 func (r *Redactor) NewSlogHandler(next slog.Handler) slog.Handler {
 	return &slogHandler{r: r, next: next}
 }

@@ -5,8 +5,8 @@
 > then the token grammar (spec §12.1) stays provisional.
 
 Reversible tokens work only if a model copies them byte for byte: a mangled token stays mangled in front of the
-reader (spec §12.4). The format is also the most expensive thing to change after `v0.1.0`, since stored
-conversations depend on it. Other projects report models reformatting placeholders
+reader (spec §12.4). The format is also expensive to change after `v0.1.0`, since callers' prompts and parsing will
+depend on it. One project, pii-mask, reports models reformatting bracketed placeholders
 ([prior art](prior-art.md)), so this needs numbers, not assumptions.
 
 ## What the harness does
@@ -60,7 +60,8 @@ go run ./internal/tokenfidelity -provider anthropic -model MODEL_ID -repeats 12 
 2. A provider key in the environment, or a local server.
 3. The list of models to measure.
 4. A budget. The plan prints the number of requests and the ceiling on output tokens (requests × `-max-tokens`).
-   Real answers are much shorter than the ceiling, but models that think count that towards the output.
+   Answers should be much shorter than the ceiling, though no real run has shown it yet, and thinking counts
+   towards it on models that think.
 
 With `-repeats 12`, a variant gets 324 tokens in the ordinary group, for 288 requests per model. If none breaks,
 the 95% upper bound on the failure rate is about 1% (the rule of three, treating tokens as independent; tokens in
@@ -73,7 +74,7 @@ one answer are not quite).
 | `complete` | Answers in which every expected value came back after restoration |
 | `tokens` | Expected tokens in the answers |
 | `restorable` | Tokens present byte for byte, so the reader gets the value |
-| `changed` | How tokens were changed, with counts: `mixed` (byte for byte in one place, changed in another), `case`, `escaped` (`&lt;`, `<`), `spacing`, `separator`, `brackets` (removed or replaced), `other`, `id_edited` (an id within two edits of the real one) |
+| `changed` | How tokens were changed, with counts: `mixed` (byte for byte in one place, changed in another), `case`, `escaped` (`&lt;`, `\u003c`), `spacing`, `separator`, `brackets` (removed or replaced), `other`, `id_edited` (an id within two edits of the real one) |
 | `missing` | Tokens with nothing recognizable in the answer |
 | `invented` | Well-formed tokens the session did not issue |
 | `wrong_token` | Tokens the scenario did not ask for that showed up. In `choose_one_pt` this is a model choosing the wrong person; spec §12.8 says nothing detects that in production |
@@ -106,7 +107,8 @@ Proposed, to be settled **before** looking at results:
 - Default sampling and default settings, since that is what a pipeline gets. Results age with model versions.
 - Tokens in one answer are correlated, and scenarios are not a random sample of anything.
 - Non-streaming requests: models are not expected to write differently when streaming, but that is an assumption.
-  Tool calls are not covered. Restoration across real chunk boundaries is tested elsewhere (`restore_test.go`).
+  Tool calls are not covered. Restoration across arbitrary chunk boundaries is tested elsewhere (`restore_test.go`),
+  with synthetic splits.
 - No fallback model is configured, on purpose: a refused request is reported, not answered by another model.
 
 ## Results
@@ -120,7 +122,9 @@ Proposed, to be settled **before** looking at results:
 Accessed 2026-11-06.
 
 - Claude API: [API overview](https://platform.claude.com/docs/en/api/overview) (endpoint, headers, workspace
-  header), [versions](https://platform.claude.com/docs/en/api/versioning) (`2026-10-21`; `temperature`, `top_p`
+  header; it calls `x-api-key` a legacy fallback for `Authorization` that is still supported, and the harness uses
+  it as the current examples do), [Messages reference](https://platform.claude.com/docs/en/api/messages/create)
+  (top-level `system`; thinking counts towards `max_tokens`), [versions](https://platform.claude.com/docs/en/api/versioning) (`2026-10-21`; `temperature`, `top_p`
   and `top_k` removed), [Messages guide](https://platform.claude.com/docs/en/build-with-claude/working-with-messages)
   (request, `x-api-key` example, response), [stop reasons](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons)
   (`refusal`, `max_tokens`).

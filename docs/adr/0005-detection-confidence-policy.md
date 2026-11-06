@@ -50,8 +50,8 @@ strong evidence: `123.456.789-09` with valid check digits is very unlikely to be
 - **Checksum only:** about 1% false positives on every candidate-length number; rejected as a default.
 - **Numeric scores and thresholds (as Presidio and Google Cloud Sensitive Data Protection do):** more
   flexible, but harder to reason about and to test; may be revisited when there are more entities.
-- **A symmetric window after the value:** the same substring rule on both sides. It catches the same true
-  positives as the adopted rule and also takes `id=…`, `{"id":…,"cpf":…}`, `pedido … cpf …` and the next line
+- **A symmetric window after the value:** the same substring rule on both sides. It catches as many true
+  positives as the adopted rule (15 of 16 in D-026) and also takes `id=…`, `{"id":…,"cpf":…}`, `pedido … cpf …` and the next line
   of a log as context; decisions log D-026 has the comparison.
 - **A larger window:** catches longer labels, and more unrelated numbers. Lists were the case that needed it,
   and the list rule covers them without widening the window for everything else.

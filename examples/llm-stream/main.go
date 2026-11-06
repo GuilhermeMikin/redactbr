@@ -51,7 +51,7 @@ func main() {
 
 var tokenPattern = regexp.MustCompile(`<(CPF|CNPJ|EMAIL)_[0-9a-z]{10}>`)
 
-// fakeModel answers by copying the tokens it was given, as a model would, and splits the answer into
+// fakeModel answers by copying the tokens it was given, as a model is asked to, and splits the answer into
 // chunks of size bytes, deterministically.
 func fakeModel(prompt string, size int) []string {
 	toks := tokenPattern.FindAllString(prompt, -1) // CPF token, email token, pasted look-alike

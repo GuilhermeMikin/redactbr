@@ -37,7 +37,7 @@ The project is pre-alpha and has no releases yet. Only the latest `main` branch 
 - A panic on crafted input in any exported function.
 - Personal data appearing in errors, `String`/`GoString` output, or other diagnostics produced by the
   package.
-- Data races in `Redactor` or `Session` (which are documented as safe for concurrent use).
+- Data races in `Redactor`, `Session` or the `slog` handler (which are documented as safe for concurrent use).
 
 ## Out of scope
 

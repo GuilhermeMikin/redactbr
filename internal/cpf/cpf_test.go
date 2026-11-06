@@ -70,7 +70,7 @@ func TestCheckDigitsRejectsNonDigits(t *testing.T) {
 	}
 }
 
-// receitaTestaCPF is an independent port of the Receita Federal page routine TestaCPF (see the package
+// receitaTestaCPF is an independent port of the Receita Federal routine TestaCPF (see the package
 // documentation). It uses a different formulation, Resto = (Soma*10) % 11 with 10 mapped to 0, so
 // agreeing with it is evidence that Valid implements the same rule.
 func receitaTestaCPF(s string) bool {

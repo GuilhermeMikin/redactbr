@@ -5,8 +5,8 @@
 
 ## Context
 
-RedactBR is meant to be adopted inside companies (fintech, health, telecom, support software) that review
-licenses before adding a dependency, and it may later have commercial components around it. Contributors
+RedactBR is meant to be adopted inside companies that review licenses before adding a dependency, and it may
+later have commercial components around it. Contributors
 need a simple way to certify their contributions, and adopters need to trust that the core will not be
 taken away.
 
