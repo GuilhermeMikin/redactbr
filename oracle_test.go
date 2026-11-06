@@ -40,7 +40,7 @@ var oracleKeywords = map[redactbr.Entity]*regexp.Regexp{
 
 var (
 	oracleGapStop = regexp.MustCompile(`[0-9\n\r.;!?]|\\[nr]`)
-	oracleLabel   = regexp.MustCompile(`^[ \t"'\\\-(\[#]*[:=0-9]`)
+	oracleLabel   = regexp.MustCompile(`^(?:[ \t"'\-(\[#]|\\["'t])*[:=0-9]`)
 )
 
 func oracleIsWord(r rune) bool {
@@ -295,7 +295,8 @@ func FuzzFindMatchesOracle(f *testing.F) {
 		"CPF/CNPJ: 12345678909, 11223344556613, 98765432100, 31415926590", "123456789-09.ABC.DEF/0001-21 e 98765432100 são CPFs",
 		`a\n123.456.789-09`, `CPF:\t12345678909`, "ab12cd34/ef56-02.ABC.DEF/0001-82 é o cnpj",
 		`{\"doc\":\"12345678909\",\"tipo\":\"CPF\"}`, `{\"id\":\"12345678909\",\"cpf\":\"x\"}`, `12345678909\tCPF`,
-		"1.123.456.789-09", "123.456.789-09.1",
+		"1.123.456.789-09", "123.456.789-09.1", `id 12345678909\tCPF\t98765432100`, `12345678909 CPF\2024`,
+		"12345678909.123.456.789-09", "CPF 12345678909.123.456.789-09",
 	} {
 		f.Add(s)
 	}

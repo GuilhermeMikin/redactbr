@@ -370,7 +370,8 @@ A separate agent reviewed the changes of this session, with reproductions and ab
 - **A token could stand for two values.** `strings.ToLower` merged `ana@exampie.com` and `ana@exampİe.com` (U+0130
   lowercases to `i`), so the second restored as the first, against spec §12.8. Normalization now folds ASCII only.
 - **Values left in the clear:** an address whose local part reached back into an identifier was dropped as an overlap;
-  a run longer than 64 bytes hid an address glued to text; a digit or combining mark in the last label hid one;
+  a run longer than 64 bytes hid an address glued to text; a digit after the letters of the last label, or a
+  combining mark in it, hid one;
   `\"` cut a value off from its keyword in escaped JSON; and formatted values after a list number without a space
   were blocked by the rule for decimals, which they cannot be read as. That rule now covers only unformatted values.
 - **Formatting:** `%s` of a dereferenced `Session` printed its values, because `fmt` follows a pointer for a verb that
@@ -387,6 +388,12 @@ A separate agent reviewed the changes of this session, with reproductions and ab
   `00099099900.000000Q0/0000-00`). A `.` right before a detected address or formatted value now separates values, as
   one right after a detected value already did. Both inputs are regression seeds, and
   `TestStrictLeavesNothingDetectable` now looks for this class on every test run.
+- **A second review, of these fixes,** found that the first version of the rule for the last label, any two letters
+  in it, took a CNPJ's head for a domain (`ana@example.com.AB12CD34/EF56-02` left `/EF56-02` in the clear) and units for
+  domains (`i7@2.6GHz`). The rule is now letters and then digits. An identifier that starts in a domain and ends past
+  it is now taken in by the address, which also covers CNPJ heads made of letters, an older gap. Ending the address
+  before the identifier was tried first, and left in the clear a CPF that had been dropped for being inside the longer
+  address; `TestStrictLeavesNothingDetectable` found it at once.
 - **Kept, on purpose:** `id 12345678909 CPF nº 98765432100` redacts the `id` one time in a hundred, since treating every
   later number as the keyword's own would lose `12345678909 é meu CPF e 98765432100 é o da minha mãe`. A letter after a
   backslash is read as an escape in `DOMAIN\rafael@empresa.example.com`, so a token holds `afael@…`; the text round

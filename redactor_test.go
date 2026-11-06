@@ -130,6 +130,8 @@ func TestRedactCNPJ(t *testing.T) {
 		{"another URL path", "a1b2c3d4/runs-63 and checkout/step-19", "a1b2c3d4/runs-63 and checkout/step-19", "<CNPJ> and <CNPJ>"},
 		{"unformatted, a dot and a formatted value", "12345678909.11.223.344/5566-13", "12345678909.<CNPJ>", "<CPF>.<CNPJ>"},
 		{"unformatted, a dot and a number", "12345678909.11223344556613", "12345678909.11223344556613", ""},
+		{"unformatted with context, a dot and a formatted CPF", "CPF 12345678909.123.456.789-09", "CPF <CPF>.<CPF>", ""},
+		{"unformatted without context, a dot and a formatted CPF", "12345678909.123.456.789-09", "12345678909.<CPF>", "<CPF>.<CPF>"},
 	})
 }
 
@@ -173,7 +175,15 @@ func TestRedactEmail(t *testing.T) {
 		// The digit after the dot starts the address, so the dot does not make the first value a decimal number.
 		{"identifier, a dot and a long address starting with a digit", "AB12CD34EF5602." + strings.Repeat("0", 50) + "@example.com", "AB12CD34EF5602.<EMAIL>", "<CNPJ>.<EMAIL>"},
 		{"local part of 65 bytes starting after a separator", "x-" + strings.Repeat("a", 64) + "@example.com", "x-<EMAIL>", ""},
+		{"glued to a CNPJ without dots", "ana@example.com.AB12CD34/EF56-02", "<EMAIL>.<CNPJ>", ""},
+		{"glued to a CNPJ whose head could be a label", "ana@example.com.ABCDEFGH/0001-95", "<EMAIL>", ""},
+		{"glued to a formatted CNPJ", "ana@example.com.AB.12C.D34/EF56-02", "<EMAIL>", ""},
+		{"a CPF in the domain, then a CNPJ that starts in it", "a@b.co-123.456.789-09.ABCDEFGH/0001-95", "<EMAIL>", ""},
 		{"digit glued to the top-level domain", "ana@example.com2", "<EMAIL>", ""},
+		{"digits then a letter in the top-level domain", "ana@example.c1d", "ana@example.c1d", ""},
+		{"a unit is not a top-level domain", "1920x1080@59.94Hz", "1920x1080@59.94Hz", ""},
+		{"a frequency is not a top-level domain", "i7@2.6GHz", "i7@2.6GHz", ""},
+		{"a version is not a top-level domain", "pkg@1.2.3rc1", "pkg@1.2.3rc1", ""},
 		{"top-level domain in another script", "ana@exemplo.भारत", "<EMAIL>", ""},
 		{"one-letter top-level domain", "ana@example.c", "ana@example.c", ""},
 		{"one letter and a digit", "ana@example.c1", "ana@example.c1", ""},
@@ -250,6 +260,8 @@ func TestKeywordAfterValue(t *testing.T) {
 		{"followed by a dash and a number", "pedido 12345678909 CPF - 98765432100", "pedido 12345678909 CPF - <CPF>", "pedido <CPF> CPF - <CPF>"},
 		{"followed by a bracket and a number", "pedido 12345678909 CPF (98765432100)", "pedido 12345678909 CPF (<CPF>)", "pedido <CPF> CPF (<CPF>)"},
 		{"followed by a square bracket and a number", "pedido 12345678909 CPF [98765432100]", "pedido 12345678909 CPF [<CPF>]", "pedido <CPF> CPF [<CPF>]"},
+		{"written-out tabs, a label", `id 12345678909\tCPF\t98765432100`, `id 12345678909\tCPF\t<CPF>`, `id <CPF>\tCPF\t<CPF>`},
+		{"a backslash and digits are not a label", `12345678909 CPF\2024`, `<CPF> CPF\2024`, ""},
 		{"escaped JSON, a label", `{\"id\":\"12345678909\",\"cpf\":\"98765432100\"}`, `{\"id\":\"12345678909\",\"cpf\":\"<CPF>\"}`, `{\"id\":\"<CPF>\",\"cpf\":\"<CPF>\"}`},
 		{"followed by a hash and a number", "pedido 12345678909 CPF #98765432100", "pedido 12345678909 CPF #<CPF>", "pedido <CPF> CPF #<CPF>"},
 		{"followed by a colon", "12345678909 é meu CPF: ok", "12345678909 é meu CPF: ok", "<CPF> é meu CPF: ok"},

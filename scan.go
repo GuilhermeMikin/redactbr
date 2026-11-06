@@ -22,7 +22,7 @@ const (
 
 // find returns the matches in s, sorted by offset and without overlaps. Scanning is linear in len(s):
 // identifier candidates start only at token boundaries and are at most 18 bytes long, the domain scan after
-// each '@' is bounded, and walks back over local parts never revisit bytes. Matches are sorted when needed.
+// each '@' is bounded, and a walk back over a local part stops at the previous '@'. Matches are sorted when needed.
 func (r *Redactor) find(s string) []Match {
 	var emails, ids []Match
 	if !r.noEmail {
@@ -379,14 +379,19 @@ func touchesWord(s string, from, to int) bool {
 }
 
 // labelsNext reports whether what follows a keyword at s[i] makes it a label: a ':', '=' or digit, possibly
-// after spaces, quotes (escaped or not) and opening punctuation ("cpf: …", `"cpf":…`, `\"cpf\":…`, "cpf=…",
-// "cpf 123…", "cpf (123…").
+// after spaces, quotes and opening punctuation, in any of which a written-out tab or an escaped quote counts as the
+// real thing ("cpf: …", `"cpf":…`, `\"cpf\":…`, "cpf=…", "cpf 123…", "cpf (123…").
 func labelsNext(s string, i int) bool {
 	for limit := min(len(s), i+contextWindow); i < limit; i++ {
 		switch b := s[i]; {
 		case b == ':' || b == '=' || isASCIIDigit(b):
 			return true
-		case strings.IndexByte(" \t\"'\\-([#", b) < 0:
+		case b == '\\':
+			if i+1 == limit || strings.IndexByte("\"'t", s[i+1]) < 0 {
+				return false
+			}
+			i++
+		case strings.IndexByte(" \t\"'-([#", b) < 0:
 			return false
 		}
 	}
@@ -394,10 +399,11 @@ func labelsNext(s string, i int) bool {
 }
 
 // resolveOverlaps sorts ms by offset and drops every match that overlaps an earlier one. Between matches
-// that start at the same offset, the longest wins. An address whose local part reaches back into an identifier is
-// not dropped: it starts after the identifier ("11.223.344/5566-13.ana@example.com"), or, if nothing is left of the
-// local part ("11.223.344/5566-13@example.com"), takes the identifier in, so that a domain left in the text cannot
-// become the local part of the next address.
+// that start at the same offset, the longest wins. When an address and an identifier only partly overlap, dropping
+// one would leave part of a value in the clear, so an address whose local part reaches back into an identifier starts
+// after it ("11.223.344/5566-13.ana@example.com"). If that leaves no local part ("11.223.344/5566-13@example.com"), or
+// if the identifier starts in the domain and ends past it ("ana@example.com.AB.12C.D34/EF56-02"), the address takes
+// the identifier in.
 func resolveOverlaps(s string, ms []Match) []Match {
 	slices.SortFunc(ms, compareOffsets)
 	out := ms[:0]
@@ -405,6 +411,10 @@ func resolveOverlaps(s string, ms []Match) []Match {
 	for _, m := range ms {
 		if m.Start < end {
 			if m.Entity != Email {
+				if address := &out[len(out)-1]; address.Entity == Email && m.End > end {
+					address.End = m.End
+					end = m.End
+				}
 				continue
 			}
 			start, ok := localStart(s, end, strings.LastIndexByte(s[:m.End], '@'))

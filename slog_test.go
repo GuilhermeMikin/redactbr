@@ -78,6 +78,8 @@ func (doublePanic) String() string { panic(doublePanic{}) }
 
 type namedBytes []byte
 
+type namedByte byte
+
 type ipLike [4]byte
 
 func (ipLike) String() string { return "1.2.3.4" }
@@ -129,6 +131,9 @@ func TestSlogHandlerAttributes(t *testing.T) {
 		{"bytes without values", slog.Any("raw", []byte("ok")), "ok"},
 		{"named bytes", slog.Any("raw", namedBytes("doc "+secret)), "doc <CPF>"},
 		{"an array of bytes", slog.Any("raw", [14]byte([]byte(secret))), "<CPF>"},
+		{"named elements", slog.Any("raw", []namedByte{'1', '2', '3', '.', '4', '5', '6', '.', '7', '8', '9', '-', '0', '9'}), "<CPF>"},
+		{"an array of named elements", slog.Any("raw", [14]namedByte{'1', '2', '3', '.', '4', '5', '6', '.', '7', '8', '9', '-', '0', '9'}), "<CPF>"},
+		{"a nil slice of named elements", slog.Any("raw", []namedByte(nil)), ""},
 		{"a raw JSON message", slog.Any("raw", json.RawMessage(`{"email":"ana@example.com"}`)), `{"email":"<EMAIL>"}`},
 		{"bytes with a String method", slog.Any("ip", ipLike{1, 2, 3, 4}), "1.2.3.4"},
 		{"struct with a string", slog.Any("v", bodyHolder{secret}), "{Body:<CPF>}"},

@@ -19,8 +19,8 @@ const localSeparators = "._%+-'"
 // findEmails appends email matches to ms. It follows the RFC 5322 addr-spec pragmatically, not strictly:
 // a local part made of ASCII letters, digits and "._%+-'" (and letters, digits and combining
 // marks of other scripts), "@", and a domain of at least two dot-separated labels made of letters, digits
-// and hyphens, whose last label has at least two letters and no hyphen (or is an "xn--" label). Quoted local
-// parts, comments and IP address literals are not recognized.
+// and hyphens, whose last label passes validTLD. Quoted local parts, comments and IP address literals are not
+// recognized.
 func findEmails(s string, ms []Match) []Match {
 	floor := 0 // a local part may not reach back into the previous address ("a@b.co@c.co")
 	for i := 0; i < len(s); i++ {
@@ -117,23 +117,31 @@ func hasXNPrefix(label string) bool {
 	return len(label) > len("xn--") && strings.EqualFold(label[:len("xn--")], "xn--")
 }
 
-// validTLD reports whether the last label is an internationalized "xn--" label, or has at least two letters and no
-// hyphen. Digits and combining marks are allowed, so that text glued to it ("example.com2") or a label in another
-// script does not hide an address. A label of digits alone is not valid, which rules out IP addresses.
+// validTLD reports whether the last label is an internationalized "xn--" label, or has at least two letters
+// (with any combining marks) and then, optionally, digits, so that text glued to it ("example.com2") or a label in
+// another script does not hide an address. Digits alone or before letters are not valid: that rules out IP addresses,
+// units ("2.6GHz") and versions ("1.2.3rc1").
 func validTLD(tld string) bool {
 	if hasXNPrefix(tld) {
 		return true
 	}
-	n := 0
+	letters, digits := 0, false
 	for _, r := range tld {
-		if r == '-' {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsMark(r):
+			if digits {
+				return false
+			}
+			if unicode.IsLetter(r) {
+				letters++
+			}
+		case unicode.IsDigit(r):
+			digits = true
+		default:
 			return false
 		}
-		if unicode.IsLetter(r) {
-			n++
-		}
 	}
-	return n >= 2
+	return letters >= 2
 }
 
 func isLocalRune(r rune) bool {

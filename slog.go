@@ -147,7 +147,9 @@ func textOf(x any) (text string) {
 	rv := reflect.ValueOf(x)
 	if k := rv.Kind(); (k == reflect.Slice || k == reflect.Array) && rv.Type().Elem().Kind() == reflect.Uint8 {
 		b := make([]byte, rv.Len())
-		reflect.Copy(reflect.ValueOf(b), rv)
+		for i := range b {
+			b[i] = byte(rv.Index(i).Uint()) //nolint:gosec // the element kind is uint8, as checked above
+		}
 		return string(b)
 	}
 	return fmt.Sprintf("%+v", x)
