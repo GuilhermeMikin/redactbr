@@ -5,10 +5,10 @@
 
 **Brazilian PII redaction for Go applications and LLM pipelines.**
 
-Local, reversible, streaming-safe and dependency-free: RedactBR finds CPF, CNPJ (numeric and the new
-alphanumeric format) and email addresses in text, inside your process, and replaces them with a typed
-label or with a session token that it can restore later — including in an LLM answer that arrives in
-chunks. The core uses the Go standard library only.
+Local, reversible and dependency-free: RedactBR finds CPF, CNPJ (numeric and the new alphanumeric format) and
+email addresses in text, inside your process, and replaces them with a typed label or with a session token that
+it can restore later. Restoration also works on an LLM answer that arrives in chunks. The core uses the Go
+standard library only.
 
 ```bash
 go get github.com/GuilhermeMikin/redactbr
@@ -54,8 +54,8 @@ func main() {
 ```
 
 Runnable programs: [`examples/basic`](examples/basic) (policies, typed replacement, a reversible round
-trip) and [`examples/llm-stream`](examples/llm-stream) (a simulated streamed LLM answer with tokens split
-across chunks). `go run ./examples/llm-stream` needs no API key and no network.
+trip), [`examples/llm-stream`](examples/llm-stream) (a simulated streamed LLM answer with tokens split
+across chunks) and [`examples/slog`](examples/slog) (redacted logs). None needs an API key or a network.
 
 ## What works today
 
@@ -66,14 +66,18 @@ across chunks). `go run ./examples/llm-stream` needs no API key and no network.
 | CNPJ (alphanumeric) | `AB.12C.D34/EF56-02`, `AB12CD34/EF56-02`, `AB12CD34EF5602`, either case | Official check digits (IN RFB 2.229/2024) | Same as numeric; `ab12cd34/ef56-02` (lowercase, no dots) counts as unformatted |
 | Email | `ana.silva@example.com` (pragmatic RFC 5322 subset) | Structure | Always |
 
-All values in this README are generated test values.
+All values in this README are generated test values. The official CNPJ format uses uppercase letters. Detection
+accepts either case, because people type lowercase and it identifies the same company ([spec §8.1](docs/spec/v0.1.md#81-lowercase-alphanumeric-cnpj)).
 
 - **Typed replacement:** `Redactor.Redact` → `<CPF>`, `<CNPJ>`, `<EMAIL>`.
 - **Detection only:** `Redactor.Find` returns entities and byte offsets, never values, so matches are safe
   to log.
 - **Reversible sessions:** `Session.Redact` → `<CPF_k7q2xm9pb3>`; `Session.Restore` puts the values back.
-- **Streaming restoration:** `Session.RestoreWriter(w)` restores tokens split across writes, holding back
-  at most 17 bytes.
+- **Streaming restoration:** `Session.RestoreWriter(w)` restores tokens split across writes in a model's answer,
+  holding back at most 17 bytes. This is about **restoring output**: redaction takes whole strings, and redacting
+  a stream of input is not implemented.
+- **Logs:** `Redactor.NewSlogHandler(next)` redacts `log/slog` records. The name of a field counts as context, so
+  `slog.String("cpf", "12345678909")` is redacted; errors and structs are logged as redacted text.
 - **Policies:** `Balanced` (default) and `Strict`, below.
 
 ### Formatted vs. unformatted values
@@ -116,8 +120,8 @@ in the [specification](docs/spec/v0.1.md).
   dependency and another system that receives the data you are trying to protect. Those can be the right
   trade-offs; RedactBR gives Go services the option not to make them.
 - **LLM traffic needs reversibility.** Models need to refer to "the customer's CPF" and answers need the
-  real value back for the user. Tokens are short enough for models to copy, and only tokens the session
-  issued are ever restored.
+  real value back for the user. Tokens are designed to be copied, and only tokens the session issued are ever
+  restored. How faithfully real models copy them has not been measured yet ([harness](docs/token-fidelity.md)).
 
 Several projects already cover parts of this, in Go and other languages; see [prior art](docs/prior-art.md).
 
@@ -131,7 +135,10 @@ user ◄──RestoreWriter (chunk by chunk)── streamed answer ◄┘
 
 - Use **one session per conversation** and keep it for the conversation's lifetime: the same value keeps
   the same token across turns, which keeps prompts stable.
-- Send **all** model-bound text through `Session.Redact`, including history and tool results.
+- Send **all** model-bound text through `Session.Redact`, including history and tool results, as whole strings.
+  `Session.Redact` does not take a stream, so a value split across two calls is not detected.
+- **Restore only what the reader of the answer may see.** A session restores everything it tokenized, so data the
+  reader must not see belongs in `Redactor.Redact`, which is irreversible, and not in that session.
 - Handle errors by sending nothing: `Session.Redact` returns an empty string on error, never the input.
 - Restore **decoded text**: write the model's text deltas to `RestoreWriter`, not the raw SSE or JSON body.
   A token split across events has framing between its halves, and JSON encoders may escape `<` and `>`
@@ -153,19 +160,29 @@ Guarantees you can rely on (each covered by tests, fuzzing or both):
 
 - **Fail closed.** Operations that can fail return an error and an empty result, never the unredacted
   input. A configuration that would detect nothing is rejected, and a zero `Redactor` detects everything.
-- **Restoration authority.** A session restores only tokens it issued. Tokens from other sessions, forged
-  or modified tokens, and token-like text that reached the session as input before it issued that token
-  are left verbatim. Ids are 50 random bits from `crypto/rand`.
+- **Against accidents and guessing.** A session restores only tokens it issued, matched byte for byte. Tokens from
+  other sessions, forged or modified tokens, and token-like text that reached the session as input before it issued
+  that token are left verbatim, so a mangled token never turns into a wrong value. Ids are 50 random bits from
+  `crypto/rand`.
 - **Bounded work.** Detection is linear in the input; streaming restoration holds at most 17 bytes;
   sessions have a capacity (`WithMaxSessionValues`, default 10,000) and store copies of values, never the
   inputs they came from.
 - **No values in diagnostics.** Errors, `Match`, `Session` and `RestoreWriter` print entities, offsets and
   counts, never values.
-- **Concurrency.** `Redactor` and `Session` are safe for concurrent use (tested with `-race`); a
-  `RestoreWriter` serves one stream.
+- **Concurrency.** `Redactor`, `Session` and the `slog` handler are safe for concurrent use (tested with `-race`);
+  a `RestoreWriter` serves one stream.
 
-A session is a trust scope: anything it tokenized can be restored into any text given to it. Never share
-a session across users. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+What the tokens do **not** protect against ([spec §12.8](docs/spec/v0.1.md#128-accidents-and-adversaries)):
+
+- **Someone repeating a valid token.** A token is a reference, not an authorization. A user who saw one, or a
+  model told to repeat it through prompt injection, gets the value restored. A session cannot tell who wrote a
+  text, so it is a trust scope: never share one across users.
+- **A value steered somewhere else.** Restoration replaces text and does not know where a token is, so a token
+  inside a link or a tool call becomes a real value there. Restore as the last step, and treat the result as
+  model output that now contains real data.
+- **A model mixing tokens up.** Swapping two customers' tokens restores both faithfully, in the wrong places.
+
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 RedactBR can support LGPD data-minimization measures; using it does not make a system compliant.
 
@@ -179,6 +196,7 @@ RedactBR can support LGPD data-minimization measures; using it does not make a s
   its domain too.
 - Only CPF, CNPJ and email. Other Brazilian identifiers (CNH, PIS, CNS, título de eleitor, phone numbers,
   CEP) and payment cards are planned, not implemented.
+- Input must be whole strings. Redacting a stream of input, and JSON-aware redaction, are planned.
 - Token survival in real models has not been measured yet; [a harness is ready](docs/token-fidelity.md).
 - The CPF check-digit rule is the one the Receita Federal documents in its e-Financeira manual and uses in
   its own validation routine. Those are official technical sources; a normative definition is still pending
@@ -213,16 +231,17 @@ make fuzz FUZZTIME=30s         # every fuzz target, 30 s each
 go test -run='^$' -bench=. -benchmem ./...
 ```
 
-Benchmarks cover single values, 1 KB and 10 KB mixed text, text without personal data, tokenization and
-(streaming) restoration. Numbers depend on the machine; run them on yours.
+Benchmarks cover single values, 1 KB and 10 KB mixed text, text without personal data, a worst case for the email
+scanner, tokenization, (streaming) restoration and the `slog` handler. Numbers depend on the machine; run them on
+yours.
 
 ## Roadmap
 
 - **v0.1** — this release candidate: CPF, CNPJ (numeric and alphanumeric), email, typed replacement,
-  sessions, streaming restoration.
+  sessions, streaming restoration, a `log/slog` handler.
 - **v0.2** — more Brazilian identifiers, payment cards, ambiguity resolution, JSON and tool-call arguments.
 - **v0.3** — CLI, `net/http` and gRPC middleware, OpenAI-compatible, Anthropic and MCP integrations, a
-  sidecar, `slog`.
+  sidecar.
 
 Details in [docs/roadmap.md](docs/roadmap.md).
 

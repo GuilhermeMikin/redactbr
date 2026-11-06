@@ -299,3 +299,27 @@ the code, with new tests and mutation checks.
   of a new package. Reversible until `v0.1.0`.
 - Conformance is checked with `testing/slogtest`. Measured in `BenchmarkSlogHandler` against
   `BenchmarkSlogBaseline`.
+
+### D-031 Public API review
+
+Reviewed as a Go developer using the library, before `v0.1.0`. Kept, for these reasons:
+
+| Item | Decision | Why |
+|---|---|---|
+| Validators in `internal/` | Kept | Exporting later is backwards compatible; nothing needs them public yet |
+| `Balanced`, `Strict` | Kept | Short and clear at the call site (`redactbr.Strict`); a prefix adds length, not meaning |
+| `Session.RestoreWriter` | Kept | It takes a session and a writer; `NewRestoreWriter(s, w)` would read no better |
+| Case-insensitive CNPJ | Kept, documented | README and spec §8.1 state the difference from the official format |
+| `123456789-09` | Kept as partially formatted | Same policy as unformatted; the docs now use that name |
+| `Option func(*config)` | Kept | Callers cannot write their own options, which keeps validation in `New` |
+| `(*Session).Redact` returning an error, `(*Redactor).Redact` not | Kept | A session can fail (capacity, randomness) and a pure scan cannot; the signatures say so |
+| No `Match.Text`, no value in `Match` | Kept | It is what makes a `Match` safe to log; `text[m.Start:m.End]` is there for who needs it |
+| `Find` returning nil when nothing matches | Kept | The usual Go idiom, safe to range over |
+
+Changed: formatting a dereferenced `Session` no longer prints its contents (D-028), a `Session` must come from
+`NewSession` (its zero value panics on use, with nothing in the message, and the docs say so), and `Find`'s comment
+now says it reports positions. `RestoreWriter` is checked at compile time to be an `io.WriteCloser`.
+
+Compatibility risks that remain before `v0.1.0`: the token grammar (D-029); adding fields to `Match` would break
+callers using unkeyed literals, which Go's compatibility promise allows; and the policy rules in spec §7 change what
+is redacted, so tightening them after the release counts as a behavior change.
