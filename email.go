@@ -64,8 +64,10 @@ func localStart(s string, floor, at int) (int, bool) {
 }
 
 // domainEnd returns where the domain that starts at s[from] ends. Text glued to an address
-// ("ana@example.com-thanks", "ana@example.com.2", trailing dots) is not part of it: the longest prefix
-// that ends before a '.' or '-' and forms a valid domain wins. At most maxDomainLen+1 bytes are scanned.
+// ("ana@example.com-thanks", "ana@example.com.2", trailing dots) is not part of it: the longest prefix that ends
+// before a '.' or '-' and forms a valid domain wins. A valid domain has at least two labels, none of them empty
+// or starting or ending with '-', and a last label accepted by validTLD. At most maxDomainLen+1 bytes are scanned,
+// once: the labels before the last one are checked as the scan passes them.
 func domainEnd(s string, from int) (int, bool) {
 	j := from
 	for j < len(s) && j-from <= maxDomainLen {
@@ -75,37 +77,37 @@ func domainEnd(s string, from int) (int, bool) {
 		}
 		j += size
 	}
-	for end := j; end > from; {
-		if end-from <= maxDomainLen && validDomain(s[from:end]) {
-			return end, true
+	best, labels, start := -1, 0, from
+	hyphen := false // the current label has a '-' so far, which only an "xn--" label may have as a last label
+	for i := from; i <= j; i++ {
+		if i < j && s[i] != '.' && s[i] != '-' {
+			continue
 		}
-		k := strings.LastIndexAny(s[from:end], ".-")
-		if k < 0 {
-			break
+		label := s[start:i]
+		valid := label != "" && label[0] != '-' && label[len(label)-1] != '-'
+		if valid && labels > 0 && i-from <= maxDomainLen && (!hyphen || hasXNPrefix(label)) && validTLD(label) {
+			best = i
 		}
-		end = from + k
-	}
-	return 0, false
-}
-
-func validDomain(d string) bool {
-	labels := 0
-	for rest := d; ; {
-		label, tail, more := strings.Cut(rest, ".")
-		if label == "" || label[0] == '-' || label[len(label)-1] == '-' {
-			return false
+		if i == j || s[i] == '-' {
+			hyphen = true
+			continue
+		}
+		if !valid {
+			break // a whole label is invalid, so no longer prefix can be valid
 		}
 		labels++
-		if !more {
-			return labels >= 2 && validTLD(label)
-		}
-		rest = tail
+		start, hyphen = i+1, false
 	}
+	return best, best >= 0
+}
+
+func hasXNPrefix(label string) bool {
+	return len(label) > len("xn--") && strings.EqualFold(label[:len("xn--")], "xn--")
 }
 
 // validTLD reports whether the last label is at least two letters, or an internationalized "xn--" label.
 func validTLD(tld string) bool {
-	if len(tld) > len("xn--") && strings.EqualFold(tld[:len("xn--")], "xn--") {
+	if hasXNPrefix(tld) {
 		return true
 	}
 	n := 0

@@ -323,3 +323,10 @@ now says it reports positions. `RestoreWriter` is checked at compile time to be 
 Compatibility risks that remain before `v0.1.0`: the token grammar (D-029); adding fields to `Match` would break
 callers using unkeyed literals, which Go's compatibility promise allows; and the policy rules in spec §7 change what
 is redacted, so tightening them after the release counts as a behavior change.
+
+### D-032 One pass over email domains
+
+- `domainEnd` validated every prefix of a domain from scratch, which is quadratic in the 256 bytes it scans. A text
+  of `a@a.a.a…` was linear overall but ran at about 3 MB/s, so a large input cost far more CPU than its size
+  suggests. It now checks labels as it passes them: about 98 MB/s on the same input, on the development machine.
+- Behavior is unchanged: `email_test.go` keeps the old rule as a reference for a differential test and a fuzz target.

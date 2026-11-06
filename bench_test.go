@@ -62,9 +62,8 @@ func BenchmarkRedactNumbers10KB(b *testing.B) {
 	benchRedact(b, mustNew(b), sb.String())
 }
 
-// BenchmarkRedactEmailWorstCase is the slowest input found for detection: every '@' is followed by the longest
-// domain that is scanned, whose labels all look valid until the last, so each prefix is tried. It is linear,
-// with a large constant.
+// BenchmarkRedactEmailWorstCase is a hard input for the email scanner: every '@' is followed by the longest domain
+// that is scanned, and none of its prefixes is valid.
 func BenchmarkRedactEmailWorstCase(b *testing.B) {
 	benchRedact(b, mustNew(b), strings.Repeat("a@"+strings.Repeat("a.", 120)+"a ", 41))
 }
