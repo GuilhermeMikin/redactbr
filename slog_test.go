@@ -71,6 +71,19 @@ type nilError struct{ msg string }
 
 func (e *nilError) Error() string { return e.msg }
 
+// doublePanic makes fmt give up: the value it panics with also panics when printed.
+type doublePanic struct{}
+
+func (doublePanic) String() string { panic(doublePanic{}) }
+
+type namedBytes []byte
+
+type ipLike [4]byte
+
+func (ipLike) String() string { return "1.2.3.4" }
+
+type bodyHolder struct{ Body string }
+
 func TestSlogHandlerAttributes(t *testing.T) {
 	const bare = "12345678909"
 	secret := "123.456.789-09"
@@ -94,6 +107,15 @@ func TestSlogHandlerAttributes(t *testing.T) {
 		{"float not named", slog.Float64("ratio", 0.5), 0.5},
 		{"CNPJ as a number", slog.Int64("cnpj", 11223344556613), "<CNPJ>"},
 		{"int with invalid check digits", slog.Int64("cpf", 12345678908), float64(12345678908)},
+		{"CPF that lost a leading zero", slog.Int64("cpf", 1234567890), "<CPF>"},
+		{"CPF that lost a leading zero, as a uint", slog.Uint64("cpf", 1234567890), "<CPF>"},
+		{"CPF that lost a leading zero, as a float", slog.Float64("cpf", 1234567890), "<CPF>"},
+		{"CPF that lost three leading zeros", slog.Int64("cpf", 12345601), "<CPF>"},
+		{"CNPJ that lost a leading zero", slog.Int64("cnpj", 1223344556660), "<CNPJ>"},
+		{"a small counter with valid digits", slog.Int64("cpf_errors", 191), float64(191)},
+		{"a lost zero without the entity's name", slog.Int64("id", 1234567890), float64(1234567890)},
+		{"a lost zero in the other entity's name", slog.Int64("cnpj", 1234567890), float64(1234567890)},
+		{"a long field name", slog.String("cpf_do_responsavel_legal_da_empresa_cliente", bare), "<CPF>"},
 		{"bool", slog.Bool("cpf", true), true},
 		{"duration", slog.Duration("cpf", time.Second), float64(time.Second)},
 		{"error", slog.Any("err", errors.New("bad document "+secret)), "bad document <CPF>"},
@@ -105,9 +127,15 @@ func TestSlogHandlerAttributes(t *testing.T) {
 		{"map", slog.Any("docs", map[string]string{"cpf": bare}), "map[cpf:<CPF>]"},
 		{"bytes", slog.Any("raw", []byte("doc "+secret)), "doc <CPF>"},
 		{"bytes without values", slog.Any("raw", []byte("ok")), "ok"},
+		{"named bytes", slog.Any("raw", namedBytes("doc "+secret)), "doc <CPF>"},
+		{"an array of bytes", slog.Any("raw", [14]byte([]byte(secret))), "<CPF>"},
+		{"a raw JSON message", slog.Any("raw", json.RawMessage(`{"email":"ana@example.com"}`)), `{"email":"<EMAIL>"}`},
+		{"bytes with a String method", slog.Any("ip", ipLike{1, 2, 3, 4}), "1.2.3.4"},
+		{"struct with a string", slog.Any("v", bodyHolder{secret}), "{Body:<CPF>}"},
 		{"nil", slog.Any("x", nil), nil},
 		{"LogValuer", slog.Any("v", secretValuer{secret}), "value <CPF>"},
 		{"Stringer that panics", slog.Any("v", panicky{}), "%!v(PANIC=String method: broken: <CPF>)"},
+		{"Stringer that panics with a value that panics", slog.Any("v", doublePanic{}), "!PANIC: could not format the value"},
 	}
 	r := mustNew(t)
 	for _, tt := range tests {
@@ -182,6 +210,21 @@ func TestSlogHandlerMessagesKeysAndGroups(t *testing.T) {
 	rec = logLine(t, r, func(l *slog.Logger) { l.Info("msg", "v", groupValuer{bare}) })
 	if g := rec["v"].(map[string]any); g["cpf"] != "<CPF>" {
 		t.Errorf("a LogValuer returning a group: %v", rec)
+	}
+
+	rec = logLine(t, r, func(l *slog.Logger) { l.Info("msg", slog.Group("cpfs", bare, "ativo")) })
+	if g := rec["cpfs"].(map[string]any); g["<CPF>"] != "ativo" {
+		t.Errorf("a key in a group named after an entity was not redacted: %v", rec)
+	}
+
+	rec = logLine(t, r, func(l *slog.Logger) { l.Info("msg", slog.Any("987.654.321-00", nil)) })
+	if v, ok := rec["<CPF>"]; !ok || v != nil {
+		t.Errorf("a key with a nil value was not redacted: %v", rec)
+	}
+
+	rec = logLine(t, r, func(l *slog.Logger) { l.WithGroup("cpf").WithGroup(bare).Info("msg", "a", 1) })
+	if g := rec["cpf"].(map[string]any); g["<CPF>"] == nil {
+		t.Errorf("a group name in a group named after an entity was not redacted: %v", rec)
 	}
 
 	rec = logLine(t, r, func(l *slog.Logger) { l.Info("msg", "tipo", "cpf", "doc", bare) })
@@ -272,6 +315,19 @@ func TestSlogHandlerPassesThrough(t *testing.T) {
 	failing.err = boom
 	if err := r.NewSlogHandler(failing).Handle(context.Background(), rec); !errors.Is(err, boom) {
 		t.Errorf("Handle returned %v", err)
+	}
+}
+
+// Deep group nesting comes from code, not input, but it should not cost more than the depth.
+func TestSlogHandlerKeepsNoGrowingContext(t *testing.T) {
+	h := mustNew(t).NewSlogHandler(newRecordingHandler())
+	for range 20000 {
+		h = h.WithGroup("group")
+	}
+	rec := slog.NewRecord(time.Time{}, slog.LevelInfo, "msg", 0)
+	rec.AddAttrs(slog.String("cpf", "12345678909"))
+	if err := h.Handle(context.Background(), rec); err != nil {
+		t.Fatal(err)
 	}
 }
 

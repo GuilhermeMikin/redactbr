@@ -37,7 +37,7 @@ func (r *Redactor) find(s string) []Match {
 	case len(ids) == 0:
 		return emails
 	}
-	return resolveOverlaps(append(ids, emails...))
+	return resolveOverlaps(s, append(ids, emails...))
 }
 
 // findIdentifiers returns the CPF and CNPJ matches in s, sorted. emails are the email matches, sorted; a
@@ -64,11 +64,13 @@ func (r *Redactor) findIdentifiers(s string, emails []Match) []Match {
 		if mayStart, escaped := mayStartIdentifier(s, i, j), followsEscape(s, i); mayStart || escaped {
 			var c candidate
 			var ok bool
-			if mayStart && leftBoundary(s, i, followsMatch(i-1)) {
-				c, ok = r.candidateAt(s, i)
+			if mayStart {
+				if allowed, decimal := leftBoundary(s, i, followsMatch(i-1)); allowed {
+					c, ok = r.candidateAt(s, i, decimal)
+				}
 			}
 			if !ok && escaped && mayStartIdentifier(s, i+1, j) {
-				c, ok = r.candidateAt(s, i+1)
+				c, ok = r.candidateAt(s, i+1, false)
 			}
 			if ok && (r.policy == Strict || balanced.redacts(s, c, &ms)) {
 				ms = append(ms, c.Match)
@@ -162,15 +164,16 @@ func mayStartIdentifier(s string, i, j int) bool {
 }
 
 // candidateAt reports the CNPJ or CPF candidate that starts at s[i], if any, applying shape, right boundary
-// and check-digit rules in that order. The left boundary is up to the caller.
-func (r *Redactor) candidateAt(s string, i int) (candidate, bool) {
+// and check-digit rules in that order. The left boundary is up to the caller, which says with afterDecimal
+// whether s[i] would continue a decimal or dotted number, which rules out an unformatted candidate.
+func (r *Redactor) candidateAt(s string, i int, afterDecimal bool) (candidate, bool) {
 	if !r.noCNPJ {
-		if end, c, formatted, ok := scanCNPJ(s, i); ok && rightBoundary(s, end) && cnpj.Valid(c) {
+		if end, c, formatted, ok := scanCNPJ(s, i); ok && (formatted || !afterDecimal) && rightBoundary(s, end, formatted) && cnpj.Valid(c) {
 			return candidate{Match{Entity: CNPJ, Start: i, End: end}, formatted}, true
 		}
 	}
 	if !r.noCPF {
-		if end, d, formatted, ok := scanCPF(s, i); ok && rightBoundary(s, end) && cpf.Valid(d) {
+		if end, d, formatted, ok := scanCPF(s, i); ok && (formatted || !afterDecimal) && rightBoundary(s, end, formatted) && cpf.Valid(d) {
 			return candidate{Match{Entity: CPF, Start: i, End: end}, formatted}, true
 		}
 	}
@@ -254,21 +257,21 @@ func alnumInto(dst []byte, src string) bool {
 	return true
 }
 
-// leftBoundary reports whether a candidate may start at s[i]: the previous rune must not be a letter or
-// digit (in any script), and must not be a '.' that follows an ASCII digit, which would make the
-// candidate the tail of a decimal or dotted number — unless dotFollowsMatch reports that the '.' comes
-// right after a detected value, in which case it separates two values. (That exception also keeps the
-// result stable: once the earlier value is replaced, the '.' no longer follows a digit.)
-func leftBoundary(s string, i int, dotFollowsMatch bool) bool {
+// leftBoundary reports whether a candidate may start at s[i]: the previous rune must not be a letter or digit, in
+// any script. decimal reports that it is a '.' that follows an ASCII digit, which would make an unformatted
+// candidate the tail of a decimal or dotted number — unless dotFollowsMatch reports that the '.' comes right after
+// a detected value, in which case it separates two values. (That exception also keeps the result stable: once the
+// earlier value is replaced, the '.' no longer follows a digit.) A formatted candidate cannot be read as a number,
+// so a '.' before it does not matter ("1.123.456.789-09" can be a numbered list).
+func leftBoundary(s string, i int, dotFollowsMatch bool) (allowed, decimal bool) {
 	if i == 0 {
-		return true
+		return true, false
 	}
 	r, size := utf8.DecodeLastRuneInString(s[:i])
 	if isWordRune(r) {
-		return false
+		return false, false
 	}
-	decimalTail := r == '.' && i-size > 0 && isASCIIDigit(s[i-size-1]) && !dotFollowsMatch
-	return !decimalTail
+	return true, r == '.' && i-size > 0 && isASCIIDigit(s[i-size-1]) && !dotFollowsMatch
 }
 
 // followsEscape reports whether s[i] is the letter of an escape sequence written out as two characters, as in
@@ -277,9 +280,9 @@ func followsEscape(s string, i int) bool {
 	return i > 0 && s[i-1] == '\\' && (s[i] == 'n' || s[i] == 'r' || s[i] == 't')
 }
 
-// rightBoundary reports whether a candidate may end at s[end]: the next rune must not be a letter or digit,
-// and must not be a '.' followed by an ASCII digit.
-func rightBoundary(s string, end int) bool {
+// rightBoundary reports whether a candidate may end at s[end]: the next rune must not be a letter or digit, and for
+// an unformatted candidate must not be a '.' followed by an ASCII digit.
+func rightBoundary(s string, end int, formatted bool) bool {
 	if end == len(s) {
 		return true
 	}
@@ -287,7 +290,7 @@ func rightBoundary(s string, end int) bool {
 	if isWordRune(r) {
 		return false
 	}
-	decimalHead := r == '.' && end+size < len(s) && isASCIIDigit(s[end+size])
+	decimalHead := !formatted && r == '.' && end+size < len(s) && isASCIIDigit(s[end+size])
 	return !decimalHead
 }
 
@@ -309,21 +312,24 @@ func keywordAt(s, keyword string) int {
 	return 0
 }
 
-// keywordBefore reports whether keyword occurs in the contextWindow bytes before start.
-func keywordBefore(s string, start int, keyword string) bool {
-	window := s[max(0, start-contextWindow):start]
-	for j := range len(window) {
-		if lowerASCII(window[j]) == keyword[0] && keywordAt(window[j:], keyword) > 0 {
+// containsKeyword reports whether keyword occurs anywhere in s.
+func containsKeyword(s, keyword string) bool {
+	for j := range len(s) {
+		if lowerASCII(s[j]) == keyword[0] && keywordAt(s[j:], keyword) > 0 {
 			return true
 		}
 	}
 	return false
 }
 
+// keywordBefore reports whether keyword occurs in the contextWindow bytes before start.
+func keywordBefore(s string, start int, keyword string) bool {
+	return containsKeyword(s[max(0, start-contextWindow):start], keyword)
+}
+
 // keywordAfter reports whether keyword is about the value that ends at s[end]. It looks in the next
-// contextWindow bytes, up to the first digit (another number is closer to the keyword), line break,
-// backslash (an escape sequence) or sentence end, for the keyword as a word of its own that does not label
-// what comes next. The rule is stricter than keywordBefore because labels precede values: a keyword after a
+// contextWindow bytes, up to the first digit (another number is closer to the keyword), line break (real or
+// written out) or sentence end, for the keyword as a word of its own that does not label what comes next. The rule is stricter than keywordBefore because labels precede values: a keyword after a
 // value is often the label of the next field, as in "id=12345678909 cpf=98765432100".
 func keywordAfter(s string, end int, keyword string) bool {
 	window := s[end:min(len(s), end+contextWindow)]
@@ -339,28 +345,35 @@ func keywordAfter(s string, end int, keyword string) bool {
 					return true
 				}
 			}
-		case isASCIIDigit(b), b == '\n', b == '\r', b == '\\', b == '.', b == ';', b == '!', b == '?':
+		case isASCIIDigit(b), b == '\n', b == '\r', b == '.', b == ';', b == '!', b == '?':
+			return false
+		case b == '\\' && j+1 < len(window) && (window[j+1] == 'n' || window[j+1] == 'r'):
 			return false
 		}
 	}
 	return false
 }
 
-// touchesWord reports whether s[from:to] has a letter, digit, combining mark or '_' right next to it.
+// touchesWord reports whether s[from:to] has a letter, digit, combining mark or '_' right next to it. The letter
+// of a written-out escape, as in "12345678909\tCPF", does not count.
 func touchesWord(s string, from, to int) bool {
-	before, _ := utf8.DecodeLastRuneInString(s[:from])
+	before, size := utf8.DecodeLastRuneInString(s[:from])
+	if size > 0 && followsEscape(s, from-size) {
+		before = ' '
+	}
 	after, _ := utf8.DecodeRuneInString(s[to:])
 	return before == '_' || after == '_' || isWordRune(before) || isWordRune(after)
 }
 
 // labelsNext reports whether what follows a keyword at s[i] makes it a label: a ':', '=' or digit, possibly
-// after spaces and opening punctuation ("cpf: …", `"cpf":…`, "cpf=…", "cpf 123…", "cpf (123…").
+// after spaces, quotes (escaped or not) and opening punctuation ("cpf: …", `"cpf":…`, `\"cpf\":…`, "cpf=…",
+// "cpf 123…", "cpf (123…").
 func labelsNext(s string, i int) bool {
 	for limit := min(len(s), i+contextWindow); i < limit; i++ {
 		switch b := s[i]; {
 		case b == ':' || b == '=' || isASCIIDigit(b):
 			return true
-		case strings.IndexByte(" \t\"'-([#", b) < 0:
+		case strings.IndexByte(" \t\"'\\-([#", b) < 0:
 			return false
 		}
 	}
@@ -368,14 +381,22 @@ func labelsNext(s string, i int) bool {
 }
 
 // resolveOverlaps sorts ms by offset and drops every match that overlaps an earlier one. Between matches
-// that start at the same offset, the longest wins.
-func resolveOverlaps(ms []Match) []Match {
+// that start at the same offset, the longest wins. An address whose local part reaches back into an identifier
+// ("11.223.344/5566-13.ana@example.com") is not dropped: it starts after the identifier instead.
+func resolveOverlaps(s string, ms []Match) []Match {
 	slices.SortFunc(ms, compareOffsets)
 	out := ms[:0]
 	end := 0
 	for _, m := range ms {
 		if m.Start < end {
-			continue
+			if m.Entity != Email {
+				continue
+			}
+			start, ok := localStart(s, end, strings.LastIndexByte(s[:m.End], '@'))
+			if !ok {
+				continue
+			}
+			m.Start = start
 		}
 		out = append(out, m)
 		end = m.End

@@ -45,7 +45,16 @@ Found during development and fixed before any release:
   (`"lista:\n123.456.789-09"`), were not detected, even formatted: the letter of the escape glued to them.
 - In a list after one keyword (`CPFs: a, b, c, d`), values past the 32-byte window were not redacted.
 - `12345678909 é meu CPF` was not redacted: only a keyword before a value counted.
-- `fmt.Sprintf("%+v", *session)`, on a dereferenced `Session`, printed its values; a `Session` now holds its
-  state behind a pointer.
+- `fmt.Sprintf("%+v", *session)`, on a dereferenced `Session`, printed its values, and so did `%s`; a `Session`
+  now holds them two pointers away. The same goes for the buffers of a `RestoreWriter`.
+- Addresses differing only by a Unicode case fold in the domain (`ana@exampie.com`, `ana@exampİe.com`) shared a
+  token, so the second restored as the first.
+- A whole address stayed in the clear when its local part reached back into an identifier
+  (`11.223.344/5566-13.ana@example.com`), when text glued before it made the run longer than 64 bytes, or when its
+  top-level label had a digit or a combining mark.
+- Formatted values after a list number without a space (`1.123.456.789-09`) were not detected: the rule for
+  decimal numbers now applies only to unformatted values.
+- `12345678909` was kept in escaped JSON (`{\"doc\":\"12345678909\",\"tipo\":\"CPF\"}`), which
+  a backslash cut off from its keyword.
 - `RestoreWriter` treated a short write without an error from the underlying writer as a success, which lost
   text silently; it now returns `io.ErrShortWrite`.

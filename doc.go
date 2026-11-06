@@ -17,8 +17,8 @@
 // unformatted) or DDDDDDDDDDD (unformatted). CNPJ is recognized as XX.XXX.XXX/XXXX-DD or XXXXXXXX/XXXX-DD
 // (formatted) or XXXXXXXXXXXXDD (unformatted), where X is a digit or a letter (the alphanumeric CNPJ, in
 // either case) and D a digit; the second CNPJ form counts as unformatted when it has lowercase letters.
-// Every candidate must have valid check digits, must not touch a letter or digit on either side, and must
-// not continue a decimal number. Email addresses are recognized by structure. The full contract, with
+// Every candidate must have valid check digits and must not touch a letter or digit on either side, and an
+// unformatted one must not continue a decimal number. Email addresses are recognized by structure. The full contract, with
 // sources and limitations, is in docs/spec/v0.1.md.
 //
 // # Policies

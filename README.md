@@ -77,7 +77,8 @@ accepts either case, because people type lowercase and it identifies the same co
   holding back at most 17 bytes. This is about **restoring output**: redaction takes whole strings, and redacting
   a stream of input is not implemented.
 - **Logs:** `Redactor.NewSlogHandler(next)` redacts `log/slog` records. The name of a field counts as context, so
-  `slog.String("cpf", "12345678909")` is redacted; errors and structs are logged as redacted text.
+  `slog.String("cpf", "12345678909")` and `slog.Int64("cpf", 1234567890)`, which lost a leading zero, are redacted;
+  errors and structs are logged as redacted text.
 - **Policies:** `Balanced` (default) and `Strict`, below.
 
 ### Formatted vs. unformatted values
@@ -86,8 +87,8 @@ A valid check digit alone is weak evidence: one in a hundred arbitrary 11-digit 
 check digits, and LLM and agent traffic is full of order numbers, ids and timestamps. So:
 
 - **Formatted** values (`123.456.789-09`, `11.223.344/5566-13`) are redacted whenever their check digits
-  are valid and they are not glued to letters or digits or part of a dotted number (`CPF123.456.789-09` is not
-  detected; `CPF nº123.456.789-09` is).
+  are valid and they are not glued to letters or digits (`CPF123.456.789-09` is not detected;
+  `CPF nº123.456.789-09` is).
 - **Unformatted** values (`12345678909`), and the partially formatted `123456789-09`, are redacted under the
   default `Balanced` policy **only with context**. A bare value without it is **not** redacted by default.
 
@@ -198,6 +199,7 @@ RedactBR can support LGPD data-minimization measures; using it does not make a s
   its domain too.
 - Only CPF, CNPJ and email. Other Brazilian identifiers (CNH, PIS, CNS, título de eleitor, phone numbers,
   CEP) and payment cards are planned, not implemented.
+- A CPF that lost its leading zeros, as spreadsheets do, is not recognized in text, only in `slog` number fields.
 - Input must be whole strings. Redacting a stream of input, and JSON-aware redaction, are planned.
 - Sessions live in the memory of one process. They do not survive a restart or move between replicas, and a new
   session does not restore the tokens of an old one.

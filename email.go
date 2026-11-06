@@ -13,11 +13,14 @@ const (
 	maxDomainLen = 255
 )
 
+// localSeparators are the punctuation allowed in a local part.
+const localSeparators = "._%+-'"
+
 // findEmails appends email matches to ms. It follows the RFC 5322 addr-spec pragmatically, not strictly:
 // a local part made of ASCII letters, digits and "._%+-'" (and letters, digits and combining
 // marks of other scripts), "@", and a domain of at least two dot-separated labels made of letters, digits
-// and hyphens, whose last label has at least two letters (or is an "xn--" label). Quoted local parts,
-// comments and IP address literals are not recognized.
+// and hyphens, whose last label has at least two letters and no hyphen (or is an "xn--" label). Quoted local
+// parts, comments and IP address literals are not recognized.
 func findEmails(s string, ms []Match) []Match {
 	floor := 0 // a local part may not reach back into the previous address ("a@b.co@c.co")
 	for i := 0; i < len(s); i++ {
@@ -56,11 +59,20 @@ func localStart(s string, floor, at int) (int, bool) {
 	if j < at && followsEscape(s, j) {
 		j++ // the letter of a written-out line break or tab is not part of the address
 	}
+	// Text glued before an address can make the run too long ("relatorio-mensal-…-ana@example.com"). The address
+	// then starts after a separator, as far back as the limit allows.
+	if at-j > maxLocalLen {
+		k := strings.IndexAny(s[at-maxLocalLen-1:at], localSeparators)
+		if k < 0 {
+			return j, false
+		}
+		j = at - maxLocalLen + k
+	}
 	// Leading dots and apostrophes are punctuation ("see:...ana@example.com", "'ana@example.com'").
 	for j < at && (s[j] == '.' || s[j] == '\'') {
 		j++
 	}
-	return j, j < at && at-j <= maxLocalLen
+	return j, j < at
 }
 
 // domainEnd returns where the domain that starts at s[from] ends. Text glued to an address
@@ -105,24 +117,28 @@ func hasXNPrefix(label string) bool {
 	return len(label) > len("xn--") && strings.EqualFold(label[:len("xn--")], "xn--")
 }
 
-// validTLD reports whether the last label is at least two letters, or an internationalized "xn--" label.
+// validTLD reports whether the last label is an internationalized "xn--" label, or has at least two letters and no
+// hyphen. Digits and combining marks are allowed, so that text glued to it ("example.com2") or a label in another
+// script does not hide an address. A label of digits alone is not valid, which rules out IP addresses.
 func validTLD(tld string) bool {
 	if hasXNPrefix(tld) {
 		return true
 	}
 	n := 0
 	for _, r := range tld {
-		if !unicode.IsLetter(r) {
+		if r == '-' {
 			return false
 		}
-		n++
+		if unicode.IsLetter(r) {
+			n++
+		}
 	}
 	return n >= 2
 }
 
 func isLocalRune(r rune) bool {
 	if r < utf8.RuneSelf {
-		return isASCIIAlnumRune(r) || strings.ContainsRune("._%+-'", r)
+		return isASCIIAlnumRune(r) || strings.ContainsRune(localSeparators, r)
 	}
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r)
 }

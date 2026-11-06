@@ -32,7 +32,8 @@ const maxTokenAttempts = 8
 // Use Redactor.NewSession to create a Session; the zero value is not usable. A Session lives in memory and
 // cannot be exported, so it does not survive a restart. It is safe for concurrent use by multiple goroutines.
 type Session struct {
-	// Behind a pointer so that formatting a dereferenced Session, as in %+v, cannot print its contents.
+	// Two pointers away, so that formatting a dereferenced Session cannot print its contents: fmt shows the
+	// target of a pointer for a verb that does not fit it, as in %s, but not the target of a second one.
 	*sessionState
 }
 
@@ -40,7 +41,11 @@ type sessionState struct {
 	r    *Redactor
 	fill func([]byte) error // random source; crypto/rand outside tests
 
-	mu       sync.RWMutex
+	mu sync.RWMutex
+	*sessionData
+}
+
+type sessionData struct {
 	tokens   map[valueKey]string // normalized value -> token
 	values   map[string]string   // token -> original text, as first seen
 	reserved map[string]struct{} // well-formed tokens seen in input before this session issued them
@@ -54,11 +59,13 @@ type valueKey struct {
 // NewSession returns an empty Session that uses r's detection settings and capacity.
 func (r *Redactor) NewSession() *Session {
 	return &Session{&sessionState{
-		r:        r,
-		fill:     cryptoFill,
-		tokens:   make(map[valueKey]string),
-		values:   make(map[string]string),
-		reserved: make(map[string]struct{}),
+		r:    r,
+		fill: cryptoFill,
+		sessionData: &sessionData{
+			tokens:   make(map[valueKey]string),
+			values:   make(map[string]string),
+			reserved: make(map[string]struct{}),
+		},
 	}}
 }
 
@@ -204,11 +211,16 @@ func (s *Session) GoString() string {
 }
 
 // normalize returns the canonical form of a detected value: CPF and CNPJ without punctuation and with
-// letters in uppercase; email with the domain in lowercase (the local part is case-sensitive).
+// letters in uppercase; email with the ASCII letters of the domain in lowercase (the local part is
+// case-sensitive). Unicode folding would merge different addresses, since a token restores to one value: both "İ"
+// and "I" lowercase to "i".
 func normalize(e Entity, v string) string {
 	if e == Email {
-		at := strings.LastIndexByte(v, '@')
-		return v[:at+1] + strings.ToLower(v[at+1:])
+		b := []byte(v)
+		for i := strings.LastIndexByte(v, '@') + 1; i < len(b); i++ {
+			b[i] = lowerASCII(b[i])
+		}
+		return string(b)
 	}
 	b := make([]byte, 0, len(v))
 	for i := range len(v) {

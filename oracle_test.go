@@ -39,8 +39,8 @@ var oracleKeywords = map[redactbr.Entity]*regexp.Regexp{
 }
 
 var (
-	oracleGapStop = regexp.MustCompile(`[0-9\n\r.;!?\\]`)
-	oracleLabel   = regexp.MustCompile(`^[ \t"'\-(\[#]*[:=0-9]`)
+	oracleGapStop = regexp.MustCompile(`[0-9\n\r.;!?]|\\[nr]`)
+	oracleLabel   = regexp.MustCompile(`^[ \t"'\\\-(\[#]*[:=0-9]`)
 )
 
 func oracleIsWord(r rune) bool {
@@ -58,9 +58,10 @@ func oracleKeywordAfter(s string, end int, entity redactbr.Entity) bool {
 		if to < len(s) && (s[to] == 's' || s[to] == 'S') {
 			to++
 		}
-		left, _ := utf8.DecodeLastRuneInString(s[:from])
+		left, n := utf8.DecodeLastRuneInString(s[:from])
 		right, _ := utf8.DecodeRuneInString(s[to:])
-		if left == '_' || right == '_' || oracleIsWord(left) || oracleIsWord(right) {
+		escape := (left == 'n' || left == 'r' || left == 't') && from-n > 0 && s[from-n-1] == '\\'
+		if left == '_' || right == '_' || (oracleIsWord(left) && !escape) || oracleIsWord(right) {
 			continue
 		}
 		if !oracleLabel.MatchString(s[to:min(len(s), to+32)]) {
@@ -94,13 +95,16 @@ func oracleFind(s string, strict bool) []redactbr.Match {
 			if i > 0 {
 				r, n := utf8.DecodeLastRuneInString(s[:i])
 				escape := (r == 'n' || r == 'r' || r == 't') && i-n > 0 && s[i-n-1] == '\\'
-				if (oracleIsWord(r) && !escape) || (r == '.' && i-n > 0 && isDigit(s[i-n-1]) && lastAccepted != i-1) {
+				if oracleIsWord(r) && !escape {
+					continue
+				}
+				if !sh.formatted && r == '.' && i-n > 0 && isDigit(s[i-n-1]) && lastAccepted != i-1 {
 					continue
 				}
 			}
 			if stop < len(s) {
 				r, n := utf8.DecodeRuneInString(s[stop:])
-				if oracleIsWord(r) || (r == '.' && stop+n < len(s) && isDigit(s[stop+n])) {
+				if oracleIsWord(r) || (!sh.formatted && r == '.' && stop+n < len(s) && isDigit(s[stop+n])) {
 					continue
 				}
 			}
@@ -172,6 +176,7 @@ func randomText(rng *rand.Rand) string {
 	pieces := []string{
 		"0", "1", "5", "9", "a", "X", "z", ".", "-", "/", " ", ",", "_", "é", "\u00a0", "\xff",
 		"cpf", "CNPJ", "Cpf:", "cnpj=", "C.P.F.", "c.n.p.j", "nº", "ª", "\u0301", "/", "123", "456.", "0001", "-09",
+		`\"`, `\r`,
 		"\n", "\r", `\n`, `\t`, `\x`, "\\", ";", "!", "?", ":", "=", "\"", "'", "(", ")", "[", "#", "\t",
 		" cpf", " CNPJ", " CPFs", " cnpjs", " (cpf)", " é meu CPF", " é o cnpj", "_cpf", "cpf_", " de ",
 	}
@@ -272,6 +277,8 @@ func FuzzFindMatchesOracle(f *testing.F) {
 		"12345678909, 987.654.321-00, 98765432100 são CPFs", "CPFs: 12345678909, 98765432100, 31415926590, 12345678909",
 		"CPF/CNPJ: 12345678909, 11223344556613, 98765432100, 31415926590", "123456789-09.ABC.DEF/0001-21 e 98765432100 são CPFs",
 		`a\n123.456.789-09`, `CPF:\t12345678909`, "ab12cd34/ef56-02.ABC.DEF/0001-82 é o cnpj",
+		`{\"doc\":\"12345678909\",\"tipo\":\"CPF\"}`, `{\"id\":\"12345678909\",\"cpf\":\"x\"}`, `12345678909\tCPF`,
+		"1.123.456.789-09", "123.456.789-09.1",
 	} {
 		f.Add(s)
 	}

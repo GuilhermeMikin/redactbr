@@ -17,24 +17,29 @@ var errWriterClosed = errors.New("redactbr: write to a closed RestoreWriter")
 // is. Close does not close the underlying writer. Use Session.RestoreWriter to create one; the zero value is not
 // usable. A RestoreWriter is not safe for concurrent use; use one per stream.
 type RestoreWriter struct {
-	// Behind a pointer so that formatting a dereferenced RestoreWriter, as in %+v, cannot print buffered text.
+	// Two pointers away from the buffers, as in Session, so that formatting a dereferenced writer cannot print
+	// them.
 	*writerState
 }
 
 type writerState struct {
 	s      *Session
 	w      io.Writer
-	buf    []byte // held-back bytes at buf[:held], then the current write
 	held   int
-	out    []byte
 	err    error
 	closed bool
+	*writerBuffers
+}
+
+type writerBuffers struct {
+	buf []byte // held-back bytes at buf[:held], then the current write
+	out []byte
 }
 
 // RestoreWriter returns a RestoreWriter that writes to w. Tokens the session issues after this call are
 // restored too.
 func (s *Session) RestoreWriter(w io.Writer) *RestoreWriter {
-	return &RestoreWriter{&writerState{s: s, w: w}}
+	return &RestoreWriter{&writerState{s: s, w: w, writerBuffers: &writerBuffers{}}}
 }
 
 // Write restores the tokens in p and writes the result, holding back a possible partial token at the end.
@@ -84,7 +89,7 @@ func (rw *RestoreWriter) flush() error {
 	if err == nil && n < len(rw.out) {
 		err = io.ErrShortWrite
 	}
-	clear(rw.out) // the buffer is reused; do not keep restored values in it
+	clear(rw.out) // the buffer is reused; do not keep restored values in it longer than needed
 	if err != nil {
 		rw.err = err
 		return err

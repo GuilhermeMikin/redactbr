@@ -92,7 +92,7 @@ Dates are when the decision was recorded. "Accessed" dates are when a source was
   Unformatted: digits only; `DDDDDDDDD-DD` (a lone check-digit hyphen is common to many identifiers).
   Partial or alternative punctuation is not a candidate. Spec §5.
 
-### D-012 Boundaries
+### D-012 Boundaries (the rule on `.` narrowed by D-034)
 
 - Letters and digits of any script block a candidate; `_`, `-`, `/` and `,` do not. A `.` next to an ASCII
   digit blocks it (decimals and dotted numbers). The comma stays a boundary so CSV columns remain
@@ -274,8 +274,9 @@ the code, with new tests and mutation checks.
 - `internal/tokenfidelity` measures token round trips with LLMs. It is `package main` under `internal/` because
   it is a development tool, not API or a CLI (the CLI is planned for v0.3), and because `go test ./...` then
   covers it. Details and the decision rule for the grammar are in `docs/token-fidelity.md`.
-- **Nothing was sent to any provider in this session.** No credentials were used and no paid call was made; all
-  results so far come from simulated models and local test servers, which test the harness and not the models.
+- **No real model was measured in this session.** No credentials were used and no paid call was made; all results
+  so far come from simulated models and local test servers, which test the harness and not the models. A review
+  agent did reach provider endpoints without credentials (D-034).
 - Provider calls use `net/http` rather than official SDKs, because ADR-0002 keeps the module free of
   dependencies. A separate module could use the SDKs, at the cost of a second `go.mod` for two small requests.
 - Sampling parameters are left out, since API version `2026-10-21` of the Claude API rejects them and a pipeline
@@ -355,3 +356,33 @@ A separate agent checked the documents against the code and the sources before t
   behind a pointer, as in `Session`.
 - The sentences behind D-026 entered the test suite, so that comparison can be repeated. The claim that every entry
   in this log says whether it is easy to reverse was removed: most did not.
+
+### D-034 Corrections from an independent review of the code
+
+A separate agent reviewed the changes of this session, with reproductions and about 120 hand-written mutants.
+
+- **Requests that left the machine.** While mutation-testing the harness in a scratch copy, the agent removed its key
+  check and ran its tests with the network open. Those tests then attempted 72 requests each to `api.anthropic.com`
+  and `api.openai.com`, with an empty key, and 72 to `example.com`, with a fake key. The bodies held tokenized
+  generated fixtures, no provider credentials existed in the environment, and the owner had not authorized provider
+  calls. The tests depended on the harness's own checks to stay local, which is the bug: `TestMain` now refuses every
+  host but the local ones, so a broken check fails a test.
+- **A token could stand for two values.** `strings.ToLower` merged `ana@exampie.com` and `ana@exampİe.com` (U+0130
+  lowercases to `i`), so the second restored as the first, against spec §12.8. Normalization now folds ASCII only.
+- **Values left in the clear:** an address whose local part reached back into an identifier was dropped as an overlap;
+  a run longer than 64 bytes hid an address glued to text; a digit or combining mark in the last label hid one;
+  `\"` cut a value off from its keyword in escaped JSON; and formatted values after a list number without a space
+  were blocked by the rule for decimals, which they cannot be read as. That rule now covers only unformatted values.
+- **Formatting:** `%s` of a dereferenced `Session` printed its values, because `fmt` follows a pointer for a verb that
+  does not fit it. Sensitive state now sits two pointers away, in `RestoreWriter` too, and tests try every verb.
+- **`slog`:** a name now counts whole, not only its last 32 bytes, and group names count for keys; numbers that lost
+  leading zeros are tried in a field named after the entity; byte slices and arrays of any name are read as text; a
+  panic `fmt` cannot survive becomes a fixed text (nothing of the value, so it does not break ADR-0003); and context no
+  longer grows with group depth, which was quadratic. A cyclic map still ends the process, as with `slog.TextHandler`.
+- **Harness:** a key echoed by a server is removed; `-repeats` cannot overflow past the request cap; URLs with
+  credentials are refused before anything prints them; a filter's `content_filter` counts as a refusal; `Retry-After`
+  is capped; a mangled id with something inside it scores as `other`, not `missing`.
+- **Kept, on purpose:** `id 12345678909 CPF nº 98765432100` redacts the `id` one time in a hundred, since treating every
+  later number as the keyword's own would lose `12345678909 é meu CPF e 98765432100 é o da minha mãe`. A letter after a
+  backslash is read as an escape in `DOMAIN\rafael@empresa.example.com`, so a token holds `afael@…`; the text round
+  trips. Host names shaped like a formatted CNPJ stay detected, since detection is case-insensitive by decision.

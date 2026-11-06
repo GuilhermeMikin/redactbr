@@ -1,7 +1,8 @@
 # ADR-0005: Detection confidence policy for unformatted identifiers
 
 - **Status:** accepted
-- **Date:** 2026-10-30; amended 2026-11-06 (context after the value and across lists; escape sequences)
+- **Date:** 2026-10-30; amended 2026-11-06 (context after the value and across lists; escape sequences; decimals
+  only for unformatted values)
 
 ## Context
 
@@ -19,7 +20,7 @@ strong evidence: `123.456.789-09` with valid check digits is very unlikely to be
    check-digit separator. Other punctuation patterns are not candidates.
 2. **Boundaries** (spec §6): no letter, digit or combining mark of any script next to a candidate (the
    ordinal indicators `ª`/`º` and the letter of a written-out `\n`, `\r` or `\t` excepted), and no `.` that
-   would make it part of a decimal or dotted number, unless that `.` follows a detected value.
+   would make an unformatted candidate part of a decimal or dotted number, unless that `.` follows a detected value.
 3. **Validity:** official check digits; the all-zero number rejected; repeated digits otherwise accepted.
 4. **Policy:**
    - `Balanced` (default): formatted and valid → redact. Unformatted and valid → redact only with context,

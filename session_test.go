@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -103,6 +104,22 @@ func TestSessionSameValueDifferentForms(t *testing.T) {
 	// A token restores to the form in which the value was first seen.
 	if got := s.Restore(strings.TrimPrefix(b, "cpf ")); got != "123.456.789-09" {
 		t.Errorf("Restore returned a different form of the value (%d bytes)", len(got))
+	}
+}
+
+// A token stands for one value, so normalization must not merge different addresses. Both U+0130 and I lowercase
+// to i, and the Kelvin sign lowercases to k.
+func TestSessionDoesNotMergeAddressesByUnicodeCase(t *testing.T) {
+	for _, pair := range [][2]string{{"ana@exampie.com", "ana@exampİe.com"}, {"ana@example.kom", "ana@example.\u212aom"}} {
+		s := newTestRedactor(t).NewSession()
+		in := pair[0] + " " + pair[1]
+		if got := s.Restore(mustRedact(t, s, in)); got != in {
+			t.Errorf("Restore returned %q, want %q", got, in)
+		}
+	}
+	s := newTestRedactor(t).NewSession()
+	if a, b := mustRedact(t, s, "ana@example.com"), mustRedact(t, s, "ana@EXAMPLE.com"); a != b {
+		t.Error("addresses that differ only in the ASCII case of the domain got different tokens")
 	}
 }
 
@@ -333,10 +350,14 @@ func TestSessionCapacity(t *testing.T) {
 		t.Errorf("a known value was rejected by a full session: %v", err)
 	}
 
-	// Reserved token-like text counts toward the capacity too.
+	// Reserved token-like text counts toward the capacity too, within one call and across calls.
 	s = newTestRedactor(t, WithMaxSessionValues(1)).NewSession()
 	if _, err := s.Redact("<CPF_aaaaaaaaaa> <CPF_bbbbbbbbbb>"); !errors.Is(err, ErrSessionFull) {
 		t.Errorf("reservations beyond capacity returned %v, want ErrSessionFull", err)
+	}
+	mustRedact(t, s, "<CPF_aaaaaaaaaa>")
+	if _, err := s.Redact("123.456.789-09"); !errors.Is(err, ErrSessionFull) {
+		t.Errorf("a value after a reservation filled the session returned %v, want ErrSessionFull", err)
 	}
 }
 
@@ -506,20 +527,20 @@ func TestSessionDoesNotRetainInput(t *testing.T) {
 			t.Error("a reservation points into the input")
 		}
 	}
+	for k := range s.tokens {
+		if inside(k.value) {
+			t.Error("a session key points into the input")
+		}
+	}
 }
 
 func TestSessionStringHidesContents(t *testing.T) {
 	s := newTestRedactor(t).NewSession()
 	tok := mustRedact(t, s, "123.456.789-09")
-	for _, got := range []string{
-		s.String(), fmt.Sprint(s), fmt.Sprintf("%+v", s), fmt.Sprintf("%#v", s),
-		fmt.Sprint(*s), fmt.Sprintf("%+v", *s), fmt.Sprintf("%#v", *s), // dereferenced
-		fmt.Sprintf("%+v", struct{ S *Session }{s}), fmt.Sprintf("%+v", struct{ S Session }{*s}), // in a struct
-	} {
-		if strings.Contains(got, "123") || strings.Contains(got, tok) || strings.Contains(got, "CPF") {
-			t.Errorf("formatting a session revealed its contents: %s", got)
-		}
-	}
+	checkNotPrinted(t, []any{
+		s, *s, []*Session{s}, []Session{*s}, map[string]Session{"s": *s},
+		struct{ S *Session }{s}, struct{ s *Session }{s}, struct{ S Session }{*s}, struct{ s Session }{*s},
+	}, "123.456.789-09", "12345678909", tok)
 	for _, v := range []any{s, *s} {
 		if got, err := json.Marshal(v); err != nil || string(got) != "{}" {
 			t.Errorf("json.Marshal(%T) = (%s, %v), want an empty object", v, got, err)
@@ -527,6 +548,30 @@ func TestSessionStringHidesContents(t *testing.T) {
 	}
 	if s.String() != "redactbr.Session{values: 1, reserved: 0}" {
 		t.Errorf("String() = %q", s.String())
+	}
+}
+
+// checkNotPrinted formats each target with every verb and fails if one of the secrets shows up, as text or encoded
+// the way fmt encodes bytes.
+func checkNotPrinted(t *testing.T, targets []any, secrets ...string) {
+	t.Helper()
+	for _, target := range targets {
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%d", "%x", "%X", "%t", "%e", "%f", "%g", "%b", "%o", "%O", "%c", "%U", "%p", "%T"} {
+			got := fmt.Sprintf(verb, target)
+			for _, secret := range secrets {
+				var decimal []string
+				for i := range len(secret) {
+					decimal = append(decimal, fmt.Sprint(secret[i]))
+				}
+				for _, form := range []string{
+					secret, fmt.Sprintf("%x", secret), fmt.Sprintf("%X", secret), strings.Join(decimal, " "), strings.Trim(strconv.Quote(secret), `"`),
+				} {
+					if strings.Contains(got, form) {
+						t.Errorf("%s of a %T printed something it holds: %s", verb, target, got)
+					}
+				}
+			}
+		}
 	}
 }
 
