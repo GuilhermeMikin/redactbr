@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,11 +16,35 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
-// These tests never leave the machine: real providers are replaced by local servers.
+// These tests never leave the machine: real providers are replaced by local servers, and TestMain makes that a fact
+// rather than an assumption, so that a broken check in the harness fails a test instead of reaching a provider.
+func TestMain(m *testing.M) {
+	local := http.DefaultTransport
+	http.DefaultTransport = stubTransport(func(r *http.Request) (*http.Response, error) {
+		if host := r.URL.Hostname(); host != "127.0.0.1" && host != "::1" && host != "localhost" {
+			return nil, fmt.Errorf("test tried to reach %s", host)
+		}
+		return local.RoundTrip(r)
+	})
+	os.Exit(m.Run())
+}
 
 const testKey = "test-key-not-a-real-credential"
+
+// The block must hold for the client the harness uses. The .invalid domain never resolves (RFC 2606), so this test
+// reaches nothing even if the block is gone.
+func TestTestsCannotLeaveTheMachine(t *testing.T) {
+	resp, err := newHTTPClient(time.Second).Get("https://example.invalid/")
+	if err == nil {
+		_ = resp.Body.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "test tried to reach example.invalid") {
+		t.Errorf("Get returned %v, want the error from the test's transport", err)
+	}
+}
 
 var allValues = []string{cpfAna, cpfBruno, cpfCarla, cnpjDelta, cnpjBeta, mailAna, mailBruno}
 
@@ -187,14 +213,20 @@ func TestRefusesInvalidRuns(t *testing.T) {
 		{"unknown provider", key, []string{"-provider", "acme", "-model", "m"}, 2, "unknown provider"},
 		{"live without provider", key, []string{"-live"}, 2, "need -provider"},
 		{"over the request cap", key, []string{"-provider", "anthropic", "-model", "m", "-live", "-base-url", srv.URL, "-repeats", "5"}, 2, "more than -max-requests"},
+		{"over the request cap by far", key, []string{"-provider", "anthropic", "-model", "m", "-repeats", "768614336404564651"}, 2, "more than -max-requests"},
+		{"plain HTTP", key, []string{"-provider", "openai", "-model", "m", "-base-url", "http://example.com/v1"}, 2, "use https"},
 		{"key over plain HTTP", key, []string{"-provider", "openai", "-model", "m", "-live", "-base-url", "http://example.com/v1"}, 2, "use https"},
+		{"credentials in the URL", key, []string{"-provider", "openai", "-model", "m", "-base-url", "https://user:s3cret@api.example.com/v1"}, 2, "must not contain credentials"},
 		{"stray argument", key, []string{"extra"}, 2, "unexpected argument"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			code, _, errOut := runHarness(t, tt.getenv, tt.args...)
+			code, out, errOut := runHarness(t, tt.getenv, tt.args...)
 			if code != tt.code || !strings.Contains(errOut, tt.want) {
 				t.Errorf("exit %d, stderr %q; want exit %d and %q", code, errOut, tt.code, tt.want)
+			}
+			if strings.Contains(out+errOut, "s3cret") {
+				t.Errorf("credentials in a URL were printed: %s%s", out, errOut)
 			}
 		})
 	}
@@ -205,7 +237,7 @@ func TestCheckEndpoint(t *testing.T) {
 		"https://api.example.com/v1": true, "http://localhost:11434/v1": true, "http://127.0.0.1:8080": true, "http://[::1]:8080": true,
 		"http://api.example.com": false, "ftp://localhost": false, "not a url": false, "": false, "https://user:secret@api.example.com": false,
 	} {
-		if err := checkEndpoint(base, testKey); (err == nil) != ok {
+		if err := checkEndpoint(base); (err == nil) != ok {
 			t.Errorf("checkEndpoint(%q) = %v, want ok = %v", base, err, ok)
 		}
 	}
@@ -439,8 +471,8 @@ func TestOpenAIRequestShape(t *testing.T) {
 }
 
 func TestProviderFailuresAreRecordedAndDoNotLeakTheKey(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, `{"error":{"message":"invalid model"}}`, http.StatusBadRequest)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"invalid model, key `+r.Header.Get("x-api-key")+`"}}`, http.StatusBadRequest)
 	}))
 	defer srv.Close()
 	path := filepath.Join(t.TempDir(), "out.jsonl")
@@ -502,6 +534,84 @@ func TestDoesNotFollowRedirects(t *testing.T) {
 	}
 	if len(leaked) > 0 {
 		t.Error("a redirect was followed with the key")
+	}
+}
+
+func TestKeyEchoedInAnAnswerIsRemoved(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{{"type": "text", "text": "your key is " + r.Header.Get("x-api-key")}},
+		})
+	}))
+	defer srv.Close()
+	m := anthropicModel{httpModel{provider: "anthropic", id: "m", base: srv.URL, key: testKey, maxTokens: 1, client: srv.Client()}}
+	resp, err := m.complete(context.Background(), request{turns: user("hi")})
+	if err != nil || strings.Contains(resp.text, testKey) || !strings.Contains(resp.text, "[key]") {
+		t.Errorf("complete = (%+v, %v)", resp, err)
+	}
+}
+
+func TestRetryWaitIsCapped(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "100000")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	m := anthropicModel{httpModel{provider: "anthropic", id: "m", base: srv.URL, key: testKey, maxTokens: 1, client: srv.Client()}}
+	if _, err := m.complete(ctx, request{turns: user("hi")}); !errors.Is(err, context.DeadlineExceeded) || calls != 1 {
+		t.Errorf("complete returned %v after %d calls, want the context's error while waiting", err, calls)
+	}
+	if maxRetryWait > 5*time.Minute {
+		t.Errorf("maxRetryWait = %v", maxRetryWait)
+	}
+}
+
+func TestOpenAITrailingSlashIsStillOpenAI(t *testing.T) {
+	client := &http.Client{Transport: stubTransport(func(r *http.Request) (*http.Response, error) {
+		raw, _ := io.ReadAll(r.Body)
+		if !bytes.Contains(raw, []byte(`"max_completion_tokens"`)) {
+			t.Errorf("unexpected body: %s", raw)
+		}
+		reply := `{"choices":[{"message":{"content":"partial"},"finish_reason":"content_filter"}]}`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(reply)), Header: http.Header{}}, nil
+	})}
+	m := openAIModel{httpModel{provider: "openai", id: "m", base: openAIDefaultBase + "/", key: testKey, maxTokens: 5, client: client}}
+	resp, err := m.complete(context.Background(), request{turns: user("hi")})
+	if err != nil || resp.stop != "refusal" {
+		t.Errorf("a content filter was not reported as a refusal: (%+v, %v)", resp, err)
+	}
+}
+
+func TestTallyCounters(t *testing.T) {
+	results := []result{
+		{Stop: "refusal", StreamAgrees: true},
+		{Stop: "max_tokens", StreamAgrees: true},
+		{Stop: "length", StreamAgrees: true},
+		{RawValue: true, Restored: true, StreamAgrees: false, Invented: []string{"<CPF_0000000000>"}},
+		{ProviderFailed: "boom"},
+	}
+	var tl tally
+	for _, r := range results {
+		tl.add(r)
+	}
+	if tl.requests != 5 || tl.refused != 1 || tl.truncated != 2 || tl.rawValues != 1 || tl.streamDisagrees != 1 || tl.invented != 1 || tl.failed != 1 || tl.complete != 1 {
+		t.Errorf("unexpected tally: %+v", tl)
+	}
+}
+
+// A value that reached a model should never come back, but if it does the report must say so.
+func TestRawValueInAnAnswerIsReported(t *testing.T) {
+	echo := fakeModel{"answers_with_a_value", func(string) string { return cpfAna }}
+	res, err := runCase(context.Background(), echo, scenarios[0], variants[0], 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.RawValue {
+		t.Error("a value in an answer was not reported")
 	}
 }
 

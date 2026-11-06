@@ -43,8 +43,11 @@ func classify(answer, token string) outcome {
 	case exact > 0:
 		return outcomeExact
 	case mentions == 0:
-		if hasNearID(lower, id) {
+		switch {
+		case hasNearID(lower, id):
 			return outcomeIDEdited
+		case strings.Contains(onlyLettersAndDigits(lower), id): // something inside the id: k7q2x-m9pb3, a zero-width space
+			return outcomeOther
 		}
 		return outcomeMissing
 	}
@@ -62,6 +65,15 @@ func classify(answer, token string) outcome {
 		return outcomeBrackets
 	}
 	return outcomeOther
+}
+
+func onlyLettersAndDigits(lower string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' || r >= 'a' && r <= 'z' {
+			return r
+		}
+		return -1
+	}, lower)
 }
 
 // hasNearID reports whether a run of letters and digits in lower, of about the length of id, is within two

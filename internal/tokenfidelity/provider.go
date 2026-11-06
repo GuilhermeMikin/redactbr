@@ -37,6 +37,7 @@ const (
 	anthropicDefaultBase = "https://api.anthropic.com"
 	anthropicVersion     = "2026-10-21"
 	openAIDefaultBase    = "https://api.openai.com/v1"
+	maxRetryWait         = time.Minute
 )
 
 // httpModel holds what the two HTTP providers share. The key is sent only in the request headers and never
@@ -58,24 +59,26 @@ func newHTTPClient(timeout time.Duration) *http.Client {
 
 func (m httpModel) name() string { return m.provider + "/" + m.id }
 
-// checkEndpoint refuses to send a key in the clear: plain HTTP is for a local server only.
-func checkEndpoint(base, key string) error {
+// checkEndpoint refuses a URL that would send a key in the clear (plain HTTP is for a local server only) or that
+// holds credentials of its own. Its errors do not repeat the URL, which is printed nowhere if it is refused.
+func checkEndpoint(base string) error {
 	u, err := url.Parse(base)
 	if err != nil || u.Host == "" {
-		return fmt.Errorf("invalid base URL %q", base)
+		return errors.New("invalid base URL")
+	}
+	if u.User != nil {
+		return errors.New("the base URL must not contain credentials")
 	}
 	host := u.Hostname()
 	local := host == "localhost" || host == "127.0.0.1" || host == "::1"
 	if u.Scheme != "https" && (u.Scheme != "http" || !local) {
-		return fmt.Errorf("base URL %q: use https, or http on localhost", base)
-	}
-	if key != "" && u.User != nil {
-		return errors.New("base URL must not contain credentials")
+		return errors.New("the base URL must use https, or http on localhost")
 	}
 	return nil
 }
 
-// post sends a JSON request, retrying rate limits and server errors a few times, and decodes the response.
+// post sends a JSON request, retrying rate limits and server errors a few times, and decodes the response. A key
+// that a server echoes back is removed before anything reads the response.
 func (m httpModel) post(ctx context.Context, url string, headers map[string]string, in, out any) error {
 	body, err := json.Marshal(in)
 	if err != nil {
@@ -100,6 +103,9 @@ func (m httpModel) post(ctx context.Context, url string, headers map[string]stri
 		if err != nil {
 			return fmt.Errorf("%s: reading the response: %w", m.provider, err)
 		}
+		if m.key != "" {
+			data = bytes.ReplaceAll(data, []byte(m.key), []byte("[key]"))
+		}
 		switch {
 		case resp.StatusCode == http.StatusOK:
 			if err := json.Unmarshal(data, out); err != nil {
@@ -109,7 +115,7 @@ func (m httpModel) post(ctx context.Context, url string, headers map[string]stri
 		case attempt < attempts && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500):
 			wait := time.Duration(attempt) * 2 * time.Second
 			if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s >= 0 {
-				wait = time.Duration(s) * time.Second
+				wait = min(time.Duration(s)*time.Second, maxRetryWait) // a server cannot stall a run for long
 			}
 			select {
 			case <-ctx.Done():
@@ -185,7 +191,7 @@ func (m openAIModel) complete(ctx context.Context, req request) (response, error
 		Content string `json:"content"`
 	}
 	in := map[string]any{"model": m.id}
-	if m.base == openAIDefaultBase {
+	if strings.TrimRight(m.base, "/") == openAIDefaultBase {
 		in["max_completion_tokens"] = m.maxTokens
 	} else {
 		in["max_tokens"] = m.maxTokens
@@ -226,7 +232,7 @@ func (m openAIModel) complete(ctx context.Context, req request) (response, error
 	if choice.Message.Content != nil {
 		r.text = *choice.Message.Content
 	}
-	if choice.Message.Refusal != nil && *choice.Message.Refusal != "" {
+	if (choice.Message.Refusal != nil && *choice.Message.Refusal != "") || choice.FinishReason == "content_filter" {
 		r.stop = "refusal"
 	}
 	return r, nil

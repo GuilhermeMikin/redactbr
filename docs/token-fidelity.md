@@ -50,8 +50,9 @@ go run ./internal/tokenfidelity -provider anthropic -model MODEL_ID -repeats 12 
 
 - `-provider openai` also reaches OpenAI-compatible servers through `-base-url`, including local ones, which
   need no key and cost nothing beyond the machine: `-base-url http://localhost:11434/v1` for Ollama.
-- `-max-requests` (default 100) refuses larger runs. Keys go only to `https` URLs or `localhost`, redirects
-  are not followed, and keys do not appear in reports or in `-out`.
+- `-max-requests` (default 100) refuses larger runs. Keys go only to `https` URLs or `localhost`, URLs with
+  credentials are refused, redirects are not followed, and keys do not appear in reports or in `-out`, even if a
+  server echoes them.
 - With a key not scoped to a workspace, the Claude API needs `ANTHROPIC_WORKSPACE_ID` too.
 
 ### What is missing to run it for real

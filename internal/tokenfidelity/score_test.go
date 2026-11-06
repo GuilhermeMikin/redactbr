@@ -28,6 +28,8 @@ func TestClassify(t *testing.T) {
 		{"double braces", "{{CPF_k7q2xm9pb3}}", outcomeBrackets},
 		{"closing tag", "</CPF_k7q2xm9pb3>", outcomeBrackets},
 		{"the id alone", "k7q2xm9pb3", outcomeOther},
+		{"a hyphen inside the id", "<CPF_k7q2x-m9pb3>", outcomeOther},
+		{"a zero-width space inside the id", "<CPF_k7q2x\u200bm9pb3>", outcomeOther},
 		{"a letter wrong", "<CPF_k7q2xm9pb4>", outcomeIDEdited},
 		{"a letter missing", "<CPF_k7q2xm9pb>", outcomeIDEdited},
 		{"two letters swapped", "<CPF_k7q2xm9p3b>", outcomeIDEdited},

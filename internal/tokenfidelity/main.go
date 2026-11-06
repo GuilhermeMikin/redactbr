@@ -85,6 +85,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		fmt.Fprintln(stderr, "tokenfidelity:", err)
 		return 2
 	}
+	if o.repeats > o.cap { // first, so that the product below cannot overflow
+		fmt.Fprintf(stderr, "tokenfidelity: -repeats %d alone is more than -max-requests %d\n", o.repeats, o.cap)
+		return 2
+	}
 	requests := len(scenarios) * len(variants) * o.repeats
 	if requests > o.cap {
 		fmt.Fprintf(stderr, "tokenfidelity: %d requests is more than -max-requests %d\n", requests, o.cap)
@@ -104,6 +108,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 				base = openAIDefaultBase
 			}
 		}
+		if err := checkEndpoint(base); err != nil {
+			fmt.Fprintln(stderr, "tokenfidelity:", err)
+			return 2
+		}
 		printPlan(stdout, o, base, requests)
 		if !o.live {
 			fmt.Fprintln(stdout, "Nothing was sent. Add -live to run this plan.")
@@ -113,10 +121,6 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		if key == "" && (o.provider == "anthropic" || o.base == "") {
 			fmt.Fprintf(stderr, "tokenfidelity: %s is not set\n", keyVariable(o.provider))
 			return 1
-		}
-		if err := checkEndpoint(base, key); err != nil {
-			fmt.Fprintln(stderr, "tokenfidelity:", err)
-			return 2
 		}
 		hm := httpModel{provider: o.provider, id: o.modelID, base: base, key: key, maxTokens: o.maxTokens, client: newHTTPClient(o.timeout)}
 		if o.provider == "anthropic" {
