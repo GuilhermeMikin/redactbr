@@ -382,6 +382,11 @@ A separate agent reviewed the changes of this session, with reproductions and ab
 - **Harness:** a key echoed by a server is removed; `-repeats` cannot overflow past the request cap; URLs with
   credentials are refused before anything prints them; a filter's `content_filter` counts as a refusal; `Retry-After`
   is capped; a mangled id with something inside it scores as `other`, not `missing`.
+- **Found by fuzzing the fixes themselves:** two of these changes made Strict unstable, leaving a value detectable
+  once its neighbor was replaced (`01p00000000000.` before a long address that starts with a digit, and
+  `00099099900.000000Q0/0000-00`). A `.` right before a detected address or formatted value now separates values, as
+  one right after a detected value already did. Both inputs are regression seeds, and
+  `TestStrictLeavesNothingDetectable` now looks for this class on every test run.
 - **Kept, on purpose:** `id 12345678909 CPF nº 98765432100` redacts the `id` one time in a hundred, since treating every
   later number as the keyword's own would lose `12345678909 é meu CPF e 98765432100 é o da minha mãe`. A letter after a
   backslash is read as an escape in `DOMAIN\rafael@empresa.example.com`, so a token holds `afael@…`; the text round

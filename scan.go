@@ -66,11 +66,11 @@ func (r *Redactor) findIdentifiers(s string, emails []Match) []Match {
 			var ok bool
 			if mayStart {
 				if allowed, decimal := leftBoundary(s, i, followsMatch(i-1)); allowed {
-					c, ok = r.candidateAt(s, i, decimal)
+					c, ok = r.candidateAt(s, i, decimal, emails)
 				}
 			}
 			if !ok && escaped && mayStartIdentifier(s, i+1, j) {
-				c, ok = r.candidateAt(s, i+1, false)
+				c, ok = r.candidateAt(s, i+1, false, emails)
 			}
 			if ok && (r.policy == Strict || balanced.redacts(s, c, &ms)) {
 				ms = append(ms, c.Match)
@@ -165,15 +165,16 @@ func mayStartIdentifier(s string, i, j int) bool {
 
 // candidateAt reports the CNPJ or CPF candidate that starts at s[i], if any, applying shape, right boundary
 // and check-digit rules in that order. The left boundary is up to the caller, which says with afterDecimal
-// whether s[i] would continue a decimal or dotted number, which rules out an unformatted candidate.
-func (r *Redactor) candidateAt(s string, i int, afterDecimal bool) (candidate, bool) {
+// whether s[i] would continue a decimal or dotted number, which rules out an unformatted candidate. emails are the
+// email matches, sorted.
+func (r *Redactor) candidateAt(s string, i int, afterDecimal bool, emails []Match) (candidate, bool) {
 	if !r.noCNPJ {
-		if end, c, formatted, ok := scanCNPJ(s, i); ok && (formatted || !afterDecimal) && rightBoundary(s, end, formatted) && cnpj.Valid(c) {
+		if end, c, formatted, ok := scanCNPJ(s, i); ok && (formatted || !afterDecimal) && r.rightBoundary(s, end, formatted, emails) && cnpj.Valid(c) {
 			return candidate{Match{Entity: CNPJ, Start: i, End: end}, formatted}, true
 		}
 	}
 	if !r.noCPF {
-		if end, d, formatted, ok := scanCPF(s, i); ok && (formatted || !afterDecimal) && rightBoundary(s, end, formatted) && cpf.Valid(d) {
+		if end, d, formatted, ok := scanCPF(s, i); ok && (formatted || !afterDecimal) && r.rightBoundary(s, end, formatted, emails) && cpf.Valid(d) {
 			return candidate{Match{Entity: CPF, Start: i, End: end}, formatted}, true
 		}
 	}
@@ -281,17 +282,29 @@ func followsEscape(s string, i int) bool {
 }
 
 // rightBoundary reports whether a candidate may end at s[end]: the next rune must not be a letter or digit, and for
-// an unformatted candidate must not be a '.' followed by an ASCII digit.
-func rightBoundary(s string, end int, formatted bool) bool {
+// an unformatted candidate must not be a '.' followed by an ASCII digit, unless that digit starts a detected value,
+// in which case the '.' separates two values. (As in leftBoundary, that keeps the result stable: once the other
+// value is replaced, the '.' no longer precedes a digit.) Only an address or a formatted value can start there:
+// an unformatted one would itself be ruled out by the '.' after a digit.
+func (r *Redactor) rightBoundary(s string, end int, formatted bool, emails []Match) bool {
 	if end == len(s) {
 		return true
 	}
-	r, size := utf8.DecodeRuneInString(s[end:])
-	if isWordRune(r) {
+	c, size := utf8.DecodeRuneInString(s[end:])
+	if isWordRune(c) {
 		return false
 	}
-	decimalHead := !formatted && r == '.' && end+size < len(s) && isASCIIDigit(s[end+size])
-	return !decimalHead
+	next := end + size
+	if formatted || c != '.' || next == len(s) || !isASCIIDigit(s[next]) {
+		return true
+	}
+	if _, address := slices.BinarySearchFunc(emails, next, func(m Match, start int) int {
+		return cmp.Compare(m.Start, start)
+	}); address {
+		return true
+	}
+	_, ok := r.candidateAt(s, next, true, nil)
+	return ok
 }
 
 // keywordAt returns the length of keyword (lowercase ASCII) at the start of s, in any case and possibly with
@@ -381,8 +394,10 @@ func labelsNext(s string, i int) bool {
 }
 
 // resolveOverlaps sorts ms by offset and drops every match that overlaps an earlier one. Between matches
-// that start at the same offset, the longest wins. An address whose local part reaches back into an identifier
-// ("11.223.344/5566-13.ana@example.com") is not dropped: it starts after the identifier instead.
+// that start at the same offset, the longest wins. An address whose local part reaches back into an identifier is
+// not dropped: it starts after the identifier ("11.223.344/5566-13.ana@example.com"), or, if nothing is left of the
+// local part ("11.223.344/5566-13@example.com"), takes the identifier in, so that a domain left in the text cannot
+// become the local part of the next address.
 func resolveOverlaps(s string, ms []Match) []Match {
 	slices.SortFunc(ms, compareOffsets)
 	out := ms[:0]
@@ -394,7 +409,8 @@ func resolveOverlaps(s string, ms []Match) []Match {
 			}
 			start, ok := localStart(s, end, strings.LastIndexByte(s[:m.End], '@'))
 			if !ok {
-				continue
+				start = out[len(out)-1].Start
+				out = out[:len(out)-1]
 			}
 			m.Start = start
 		}

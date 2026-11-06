@@ -128,6 +128,8 @@ func TestRedactCNPJ(t *testing.T) {
 		// Paths shaped like XXXXXXXX/XXXX-DD whose check digits happen to be valid.
 		{"URL path with lowercase letters", "GET /builds/20261030/main-12/log", "GET /builds/20261030/main-12/log", "GET /builds/<CNPJ>/log"},
 		{"another URL path", "a1b2c3d4/runs-63 and checkout/step-19", "a1b2c3d4/runs-63 and checkout/step-19", "<CNPJ> and <CNPJ>"},
+		{"unformatted, a dot and a formatted value", "12345678909.11.223.344/5566-13", "12345678909.<CNPJ>", "<CPF>.<CNPJ>"},
+		{"unformatted, a dot and a number", "12345678909.11223344556613", "12345678909.11223344556613", ""},
 	})
 }
 
@@ -164,8 +166,12 @@ func TestRedactEmail(t *testing.T) {
 		{"a dot after a domain that ends in a digit separates values", "a@b.xn--p1.12345678909", "<EMAIL>.12345678909", "<EMAIL>.<CPF>"},
 		{"after an identifier that the local part reaches into", "11.223.344/5566-13.ana@example.com", "<CNPJ>.<EMAIL>", ""},
 		{"after an identifier, with a hyphen", "123.456.789-09-ana@example.com", "<EMAIL>", ""},
+		{"an identifier is the whole local part", "11.223.344/5566-13@example.com", "<EMAIL>", ""},
+		{"an identifier is the whole local part, and another @", "11.223.344/5566-13@b.co@b.co", "<EMAIL>@b.co", ""},
 		{"long text glued before", "relatorio-mensal-2026-11-clientes-ativos-regiao-sudeste-filial-sp-ana@example.com", "relatorio-<EMAIL>", ""},
 		{"long text with the last separator in range", strings.Repeat("a", 65) + ".ana@example.com", strings.Repeat("a", 65) + ".<EMAIL>", ""},
+		// The digit after the dot starts the address, so the dot does not make the first value a decimal number.
+		{"identifier, a dot and a long address starting with a digit", "AB12CD34EF5602." + strings.Repeat("0", 50) + "@example.com", "AB12CD34EF5602.<EMAIL>", "<CNPJ>.<EMAIL>"},
 		{"local part of 65 bytes starting after a separator", "x-" + strings.Repeat("a", 64) + "@example.com", "x-<EMAIL>", ""},
 		{"digit glued to the top-level domain", "ana@example.com2", "<EMAIL>", ""},
 		{"top-level domain in another script", "ana@exemplo.भारत", "<EMAIL>", ""},

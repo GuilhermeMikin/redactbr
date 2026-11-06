@@ -77,6 +77,31 @@ type oracleValue struct {
 	overlapped        bool // a later value of the other entity starts inside this one
 }
 
+// oracleValid reports whether m, in one of the shapes of entity, has valid check digits.
+func oracleValid(entity redactbr.Entity, m string) bool {
+	v := strings.ToUpper(strings.NewReplacer(".", "", "-", "", "/", "").Replace(m))
+	if entity == redactbr.CNPJ {
+		var c [cnpj.Len]byte
+		copy(c[:], v)
+		return cnpj.Valid(c)
+	}
+	var d [cpf.Len]byte
+	copy(d[:], v)
+	return cpf.Valid(d)
+}
+
+// oracleFormattedAt reports whether a formatted value starts at s[i].
+func oracleFormattedAt(s string, i int) bool {
+	for _, sh := range oracleShapes {
+		if m := sh.re.FindString(s[i:]); sh.formatted && m != "" && oracleValid(sh.entity, m) {
+			if r, _ := utf8.DecodeRuneInString(s[i+len(m):]); !oracleIsWord(r) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func oracleFind(s string, strict bool) []redactbr.Match {
 	isDigit := func(b byte) bool { return '0' <= b && b <= '9' }
 	var valid []oracleValue // every valid candidate so far, whether it was accepted or not
@@ -104,23 +129,15 @@ func oracleFind(s string, strict bool) []redactbr.Match {
 			}
 			if stop < len(s) {
 				r, n := utf8.DecodeRuneInString(s[stop:])
-				if oracleIsWord(r) || (!sh.formatted && r == '.' && stop+n < len(s) && isDigit(s[stop+n])) {
+				if oracleIsWord(r) {
+					continue
+				}
+				if !sh.formatted && r == '.' && stop+n < len(s) && isDigit(s[stop+n]) && !oracleFormattedAt(s, stop+n) {
 					continue
 				}
 			}
-			v := strings.ToUpper(strings.NewReplacer(".", "", "-", "", "/", "").Replace(m))
-			if sh.entity == redactbr.CNPJ {
-				var c [cnpj.Len]byte
-				copy(c[:], v)
-				if !cnpj.Valid(c) {
-					continue
-				}
-			} else {
-				var d [cpf.Len]byte
-				copy(d[:], v)
-				if !cpf.Valid(d) {
-					continue
-				}
+			if !oracleValid(sh.entity, m) {
+				continue
 			}
 
 			cur := oracleValue{Match: redactbr.Match{Entity: sh.entity, Start: i, End: stop}}
@@ -287,6 +304,40 @@ func FuzzFindMatchesOracle(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		checkAgainstOracle(t, balanced, strict, s)
 	})
+}
+
+// Under Strict nothing detectable may be left in the output, so replacing one value must not make another one
+// detectable. Text dense in values next to separators finds that faster than fuzzing does.
+func TestStrictLeavesNothingDetectable(t *testing.T) {
+	strict := mustNew(t, redactbr.WithPolicy(redactbr.Strict))
+	rng := rand.New(rand.NewPCG(31, 32))
+	separators := []string{".", ".", ".", "-", "/", "_", " ", ",", "'", "+", "@", "@b.co", "@b.co.", "\\n", ""}
+	values := func() string {
+		switch rng.IntN(6) {
+		case 0:
+			return generatedCPF(rng, rng.IntN(3))
+		case 1:
+			return generatedCNPJ(rng, rng.IntN(3))
+		case 2:
+			return strings.Repeat("0", rng.IntN(70))
+		case 3:
+			return "a@b.co"
+		case 4:
+			return []string{"12345678909", "123.456.789-09", "11223344556613", "AB12CD34/EF56-02", "1", "12"}[rng.IntN(6)]
+		}
+		return strings.Repeat("a.", rng.IntN(40))
+	}
+	for range 100000 {
+		var b strings.Builder
+		for range 1 + rng.IntN(5) {
+			b.WriteString(values())
+			b.WriteString(separators[rng.IntN(len(separators))])
+		}
+		s := b.String()
+		if left := strict.Find(strict.Redact(s)); len(left) > 0 {
+			t.Fatalf("Redact(%q) = %q, which still has %v", s, strict.Redact(s), left)
+		}
+	}
 }
 
 // FuzzRedact checks invariants of Redact with every entity enabled: it never panics, its output is the
