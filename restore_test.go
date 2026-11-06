@@ -209,9 +209,14 @@ func TestRestoreWriterStringHidesContents(t *testing.T) {
 	if _, err := w.Write([]byte("<CPF_k7q2xm9pb3> <CPF_k7q2")); err != nil {
 		t.Fatal(err)
 	}
-	for _, got := range []string{fmt.Sprint(w), fmt.Sprintf("%+v", w), fmt.Sprintf("%#v", w), fmt.Sprintf("%+v", *w)} {
-		if strings.Contains(got, "123") || strings.Contains(got, "k7q2") {
-			t.Error("formatting a RestoreWriter revealed buffered text")
+	for _, got := range []string{
+		fmt.Sprint(w), fmt.Sprintf("%+v", w), fmt.Sprintf("%#v", w),
+		fmt.Sprint(*w), fmt.Sprintf("%+v", *w), fmt.Sprintf("%#v", *w), // dereferenced
+		fmt.Sprintf("%+v", struct{ W *RestoreWriter }{w}), fmt.Sprintf("%+v", struct{ w RestoreWriter }{*w}), // in a struct
+	} {
+		// The held bytes are "<CPF_k7q2"; as numbers, %+v would print 60 67 80 70.
+		if strings.Contains(got, "123") || strings.Contains(got, "k7q2") || strings.Contains(got, "60 67") {
+			t.Errorf("formatting a RestoreWriter revealed buffered text: %s", got)
 		}
 	}
 	if strings.Contains(string(w.out[:cap(w.out)]), "123.456.789-09") {

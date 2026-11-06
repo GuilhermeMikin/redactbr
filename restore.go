@@ -14,9 +14,14 @@ var errWriterClosed = errors.New("redactbr: write to a closed RestoreWriter")
 // the start of a token are held back between writes. Everything else is written through unchanged.
 //
 // Call Close at the end of the stream to write the held-back bytes; an unfinished token is written as it
-// is. Close does not close the underlying writer. A RestoreWriter is not safe for concurrent use; use one
-// per stream.
+// is. Close does not close the underlying writer. Use Session.RestoreWriter to create one; the zero value is not
+// usable. A RestoreWriter is not safe for concurrent use; use one per stream.
 type RestoreWriter struct {
+	// Behind a pointer so that formatting a dereferenced RestoreWriter, as in %+v, cannot print buffered text.
+	*writerState
+}
+
+type writerState struct {
 	s      *Session
 	w      io.Writer
 	buf    []byte // held-back bytes at buf[:held], then the current write
@@ -29,7 +34,7 @@ type RestoreWriter struct {
 // RestoreWriter returns a RestoreWriter that writes to w. Tokens the session issues after this call are
 // restored too.
 func (s *Session) RestoreWriter(w io.Writer) *RestoreWriter {
-	return &RestoreWriter{s: s, w: w}
+	return &RestoreWriter{&writerState{s: s, w: w}}
 }
 
 // Write restores the tokens in p and writes the result, holding back a possible partial token at the end.
@@ -87,13 +92,12 @@ func (rw *RestoreWriter) flush() error {
 	return nil
 }
 
-// String describes the writer without revealing buffered text. It has a value receiver so that
-// formatting a dereferenced writer is safe too.
-func (rw RestoreWriter) String() string {
+// String describes the writer without revealing buffered text.
+func (rw *RestoreWriter) String() string {
 	return fmt.Sprintf("redactbr.RestoreWriter{held: %d, closed: %t}", rw.held, rw.closed)
 }
 
 // GoString is like String.
-func (rw RestoreWriter) GoString() string {
+func (rw *RestoreWriter) GoString() string {
 	return rw.String()
 }

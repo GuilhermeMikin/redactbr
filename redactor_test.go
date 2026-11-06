@@ -250,6 +250,51 @@ func TestKeywordAfterValue(t *testing.T) {
 	})
 }
 
+// TestRuleAfterValueAgainstSymmetricWindow keeps the comparison in decisions log D-026 reproducible: 36 sentences
+// whose number has valid check digits, with a keyword that is about the number or not. They show the shapes that
+// matter; they are not a measurement on real traffic.
+func TestRuleAfterValueAgainstSymmetricWindow(t *testing.T) {
+	const v = "12345678909"
+	about := []string{
+		v + " é meu CPF", v + " is my cpf.", v + " (CPF)", v + " - CPF - Ana", v + ", meu CPF", v + " é meu C.P.F.",
+		v + " consta nos CPFs", `"` + v + `" é o CPF`, `{"doc":"` + v + `","tipo":"CPF"}`, v + ",CPF,Ana",
+		"| " + v + " | CPF |", v + "\tCPF", v + "</cpf>", v + " é meu CPF e 42 é meu pedido", v + " (CPF) 42",
+		v + " é meu CPF: segue",
+	}
+	notAbout := []string{
+		"id=" + v + " cpf=98765432100", "id=" + v + " cpf=ok", `{"id":"` + v + `","cpf":"98765432100"}`,
+		`{"id": ` + v + `, "cpf": null}`, `{'id': '` + v + `', 'cpf': 'x'}`, "pedido " + v + " cpf 98765432100",
+		"pedido " + v + " CPF - 98765432100", "pedido " + v + " CPF (98765432100)", "pedido " + v + ". CPF do cliente",
+		v + "! CPF", v + "; CPF", "pedido " + v + "\nCPF do cliente", "pedido " + v + "\r\nCPF", `pedido ` + v + `\n CPF`,
+		"pedido " + v + " lote 7 CPF", v + " customerCpf", v + " nr_cpf", v + " cpf_status", v + " cpfoo",
+		"pedido " + v + " do cliente sem CPF",
+	}
+	r := mustNew(t)
+	rule := func(s string) bool { return !strings.Contains(r.Redact(s), v) }
+	symmetricWindow := func(s string) bool { // the same substring rule as before a value, without dots
+		end := strings.Index(s, v) + len(v)
+		return strings.Contains(strings.ToLower(s[end:min(len(s), end+32)]), "cpf")
+	}
+	count := func(texts []string, accepts func(string) bool) int {
+		n := 0
+		for _, text := range texts {
+			if accepts(text) {
+				n++
+			}
+		}
+		return n
+	}
+	for _, tt := range []struct {
+		name            string
+		accepts         func(string) bool
+		about, notAbout int
+	}{{"adopted rule", rule, 15, 1}, {"symmetric window", symmetricWindow, 15, 20}} {
+		if a, n := count(about, tt.accepts), count(notAbout, tt.accepts); a != tt.about || n != tt.notAbout {
+			t.Errorf("%s accepts %d of %d and %d of %d, want %d and %d", tt.name, a, len(about), n, len(notAbout), tt.about, tt.notAbout)
+		}
+	}
+}
+
 func TestValueLists(t *testing.T) {
 	far := strings.Repeat(" ", 33)  // beyond the window
 	near := strings.Repeat(" ", 32) // at the edge of the window
@@ -264,17 +309,22 @@ func TestValueLists(t *testing.T) {
 		{"at the edge of the window", "CPF 12345678909" + near + "98765432100", "CPF <CPF>" + near + "<CPF>", ""},
 		{"beyond the window", "CPF 12345678909" + far + "98765432100", "CPF <CPF>" + far + "98765432100", "CPF <CPF>" + far + "<CPF>"},
 		{"another entity does not carry context", "CPF 123.456.789-09 / " + "11223344556613", "CPF <CPF> / 11223344556613", "CPF <CPF> / <CNPJ>"},
+		{"mixed list under one label", "CPF/CNPJ: 12345678909, 11223344556613, 98765432100, 31415926590", "CPF/CNPJ: <CPF>, <CNPJ>, <CPF>, <CPF>", ""},
+		{"another entity does not end a list", "CPF: 12345678909, AB12CD34EF5602, 98765432100", "CPF: <CPF>, AB12CD34EF5602, <CPF>", "CPF: <CPF>, <CNPJ>, <CPF>"},
 		{"formatted value without context", "123.456.789-09 pedido 98765432100", "<CPF> pedido 98765432100", "<CPF> pedido <CPF>"},
 		{"keyword after, two values", "12345678909 e 98765432100 são meus CPFs", "<CPF> e <CPF> são meus CPFs", ""},
 		{"keyword after, three values", "12345678909, 98765432100, 31415926590 são CPFs", "<CPF>, <CPF>, <CPF> são CPFs", ""},
 		{"keyword after, a formatted value last", "12345678909 e 987.654.321-00 são CPFs", "<CPF> e <CPF> são CPFs", ""},
 		{"keyword after, a formatted value in the middle", "12345678909, 987.654.321-00, 98765432100 são CPFs", "<CPF>, <CPF>, <CPF> são CPFs", ""},
 		{"keyword after, the first value too far", "12345678909" + far + "98765432100 é meu CPF", "12345678909" + far + "<CPF> é meu CPF", "<CPF>" + far + "<CPF> é meu CPF"},
-		{"keyword after, another entity in between", "12345678909 11223344556613 98765432100 é meu CPF", "12345678909 11223344556613 <CPF> é meu CPF", "<CPF> <CNPJ> <CPF> é meu CPF"},
+		{"keyword after, another entity in between", "12345678909 11223344556613 98765432100 é meu CPF", "<CPF> 11223344556613 <CPF> é meu CPF", "<CPF> <CNPJ> <CPF> é meu CPF"},
+		{"a value that has context does not reach back", "11111111111 e CPF: 12345678909 e 98765432100 são CPFs", "11111111111 e CPF: <CPF> e <CPF> são CPFs", "<CPF> e CPF: <CPF> e <CPF> são CPFs"},
 		{"a label does not reach back", "pedido 12345678909, CPF 98765432100", "pedido 12345678909, CPF <CPF>", "pedido <CPF>, CPF <CPF>"},
 		{"a formatted value does not reach back", "pedido 12345678909, 987.654.321-00", "pedido 12345678909, <CPF>", "pedido <CPF>, <CPF>"},
 		// The last two characters of the first candidate start the second one, a formatted CNPJ.
 		{"overlapping candidates", "ab12cd34/ef56-02.ABC.DEF/0001-82 é o cnpj", "ab12cd34/ef56-<CNPJ> é o cnpj", "<CNPJ>.ABC.DEF/0001-82 é o cnpj"},
+		// The same, with candidates of different entities and a later keyword that could reach back.
+		{"overlapping candidates of two entities", "123456789-09.ABC.DEF/0001-21 e 98765432100 são CPFs", "123456789-<CNPJ> e <CPF> são CPFs", "<CPF>.ABC.DEF/0001-21 e <CPF> são CPFs"},
 	})
 
 	// Values pulled in by a later keyword stay in order among the others.

@@ -73,6 +73,7 @@ func oracleKeywordAfter(s string, end int, entity redactbr.Entity) bool {
 type oracleValue struct {
 	redactbr.Match
 	context, accepted bool
+	overlapped        bool // a later value of the other entity starts inside this one
 }
 
 func oracleFind(s string, strict bool) []redactbr.Match {
@@ -119,18 +120,31 @@ func oracleFind(s string, strict bool) []redactbr.Match {
 			}
 
 			cur := oracleValue{Match: redactbr.Match{Entity: sh.entity, Start: i, End: stop}}
-			inRun := func(prev, next oracleValue) bool {
-				return prev.Entity == next.Entity && next.Start >= prev.End && next.Start-prev.End <= 32
+			// previous returns the index of the last value of this entity before k, or -1.
+			previous := func(k int) int {
+				for k--; k >= 0; k-- {
+					if valid[k].Entity == sh.entity {
+						return k
+					}
+				}
+				return -1
 			}
+			inRun := func(prev, next oracleValue) bool { return next.Start >= prev.End && next.Start-prev.End <= 32 }
+			for k := range valid {
+				if valid[k].Entity != sh.entity && valid[k].End > i {
+					valid[k].overlapped = true
+				}
+			}
+			last := previous(len(valid))
 			before := oracleKeywords[sh.entity].MatchString(s[max(0, i-32):i]) ||
-				(len(valid) > 0 && valid[len(valid)-1].context && inRun(valid[len(valid)-1], cur))
+				(last >= 0 && valid[last].context && inRun(valid[last], cur))
 			after := !before && oracleKeywordAfter(s, stop, sh.entity)
 			cur.context = before || after
 			if after {
 				// The keyword also reaches back over the values of this run.
 				next := cur
-				for k := len(valid) - 1; k >= 0 && inRun(valid[k], next); k-- {
-					valid[k].accepted = true
+				for k := last; k >= 0 && inRun(valid[k], next); k = previous(k) {
+					valid[k].accepted = valid[k].accepted || !valid[k].overlapped
 					next = valid[k]
 				}
 			}
@@ -256,6 +270,7 @@ func FuzzFindMatchesOracle(f *testing.F) {
 		"AB12CD34/EF56-02", "x12345678909", "cpf_12345678909", "11.223.344/5566-13,987.654.321-00",
 		"12345678909 é meu CPF", "id=12345678909 cpf=98765432100", `{"id":"12345678909","cpf":"x"}`,
 		"12345678909, 987.654.321-00, 98765432100 são CPFs", "CPFs: 12345678909, 98765432100, 31415926590, 12345678909",
+		"CPF/CNPJ: 12345678909, 11223344556613, 98765432100, 31415926590", "123456789-09.ABC.DEF/0001-21 e 98765432100 são CPFs",
 		`a\n123.456.789-09`, `CPF:\t12345678909`, "ab12cd34/ef56-02.ABC.DEF/0001-82 é o cnpj",
 	} {
 		f.Add(s)

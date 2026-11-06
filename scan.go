@@ -20,9 +20,9 @@ const (
 	cnpjKeyword = "cnpj"
 )
 
-// find returns the matches in s, sorted by offset and without overlaps. It runs in time linear in len(s):
-// identifier candidates start only at token boundaries and are at most 18 bytes long, and email expansion
-// around each '@' is bounded by the RFC 5321 length limits.
+// find returns the matches in s, sorted by offset and without overlaps. Scanning is linear in len(s):
+// identifier candidates start only at token boundaries and are at most 18 bytes long, the domain scan after
+// each '@' is bounded, and walks back over local parts never revisit bytes. Matches are sorted when needed.
 func (r *Redactor) find(s string) []Match {
 	var emails, ids []Match
 	if !r.noEmail {
@@ -44,7 +44,7 @@ func (r *Redactor) find(s string) []Match {
 // '.' right after one of them, or after an identifier, separates values and is not a decimal point.
 func (r *Redactor) findIdentifiers(s string, emails []Match) []Match {
 	var ms []Match
-	var run valueRun
+	var balanced balancedScan
 	lastEnd, e := -1, 0
 	followsMatch := func(pos int) bool {
 		for e < len(emails) && emails[e].End < pos {
@@ -70,7 +70,7 @@ func (r *Redactor) findIdentifiers(s string, emails []Match) []Match {
 			if !ok && escaped && mayStartIdentifier(s, i+1, j) {
 				c, ok = r.candidateAt(s, i+1)
 			}
-			if ok && (r.policy == Strict || run.redacts(s, c, &ms)) {
+			if ok && (r.policy == Strict || balanced.redacts(s, c, &ms)) {
 				ms = append(ms, c.Match)
 				lastEnd = c.End
 				i = c.End
@@ -81,7 +81,7 @@ func (r *Redactor) findIdentifiers(s string, emails []Match) []Match {
 		// boundary.
 		i = j
 	}
-	if run.reachedBack {
+	if balanced.reachedBack {
 		slices.SortFunc(ms, compareOffsets)
 	}
 	return ms
@@ -94,39 +94,44 @@ type candidate struct {
 	formatted bool
 }
 
-func (c candidate) keyword() string {
-	if c.Entity == CNPJ {
-		return cnpjKeyword
-	}
-	return cpfKeyword
-}
-
-// valueRun is what the Balanced policy remembers during a scan: the current run of valid values of one
-// entity, each at most contextWindow bytes after the previous one. A run is how values of a list share the
-// context of one keyword.
+// valueRun is the current run of valid values of one entity during a scan, each at most contextWindow bytes after
+// the previous one. A run is how the values of a list share the context of one keyword; a value of the other
+// entity in between does not end it, so that mixed columns under "CPF/CNPJ" stay covered.
 type valueRun struct {
-	entity      Entity
-	end         int     // where the last value of the run ends
-	context     bool    // whether the last value of the run has context
-	kept        []Match // values of the run that were not redacted
-	reachedBack bool    // whether any value was added to the matches out of order
+	end     int     // where the last value of the run ends
+	context bool    // whether the last value of the run has context
+	kept    []Match // values of the run that were not redacted
 }
 
-// redacts applies the Balanced policy to c. A keyword after c also covers the values kept earlier in the
-// run, which are added to ms out of order.
-func (run *valueRun) redacts(s string, c candidate, ms *[]Match) bool {
-	if c.Entity != run.entity || c.Start < run.end || c.Start-run.end > contextWindow {
-		run.entity, run.context, run.kept = c.Entity, false, run.kept[:0]
+// balancedScan is what the Balanced policy remembers during a scan.
+type balancedScan struct {
+	cpf, cnpj   valueRun
+	reachedBack bool // whether any value was added to the matches out of order
+}
+
+// redacts applies the Balanced policy to c. A keyword after c also covers the values kept earlier in its run,
+// which are added to ms out of order.
+func (b *balancedScan) redacts(s string, c candidate, ms *[]Match) bool {
+	run, other, keyword := &b.cpf, &b.cnpj, cpfKeyword
+	if c.Entity == CNPJ {
+		run, other, keyword = &b.cnpj, &b.cpf, cnpjKeyword
+	}
+	if c.Start < run.end || c.Start-run.end > contextWindow {
+		run.context, run.kept = false, run.kept[:0]
+	}
+	// A formatted value can start inside a value kept earlier, as in "123456789-09.ABC.DEF/0001-21". Only one
+	// of them can be redacted, and the formatted one is the better evidence.
+	for n := len(other.kept); n > 0 && other.kept[n-1].End > c.Start; n-- {
+		other.kept = other.kept[:n-1]
 	}
 	run.end = c.End
-	keyword := c.keyword()
 	before := run.context || keywordBefore(s, c.Start, keyword)
 	after := !before && keywordAfter(s, c.End, keyword)
 	run.context = before || after
 	if after && len(run.kept) > 0 {
 		*ms = append(*ms, run.kept...)
 		run.kept = run.kept[:0]
-		run.reachedBack = true
+		b.reachedBack = true
 	}
 	if !run.context && !c.formatted {
 		run.kept = append(run.kept, c.Match)
