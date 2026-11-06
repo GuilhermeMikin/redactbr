@@ -1,7 +1,7 @@
 # ADR-0004: Reversible token session safety
 
 - **Status:** accepted
-- **Date:** 2026-10-30
+- **Date:** 2026-10-30; amended 2026-11-06 (accidents and adversaries stated apart)
 
 ## Context
 
@@ -39,11 +39,18 @@ Tokens also have to be easy for models to copy and cheap to parse in a stream.
    paths hold the read lock for lookups.
 7. **A session is a trust scope.** The documentation says plainly that everything a session tokenized can
    be restored into any text given to it, so sessions are per conversation and never shared across users.
+8. **Accidents are covered; repetition is not.** Ids and reservation protect against collisions and guessing.
+   A valid token is a bearer reference: a user who saw it, or a model told to repeat it, gets it restored,
+   and a session cannot tell who wrote a text. The spec (§12.8) states this next to the guarantees, and tests
+   pin it down, so that nobody reads it as a guarantee.
 
 ## Consequences
 
 - Guessing an issued token succeeds with probability about *n*/2⁵⁰ per guess (*n* tokens of that entity in
   the session); a look-alike that bypasses the session collides with that probability instead of never.
+- Reversibility has a cost that no token format removes: prompt injection can make a model repeat tokens, or
+  put them in a link, and restoration then reveals or sends the values. Callers decide what a reader may see
+  and where restored text goes; data the reader must not see stays out of the session restored for them.
 - Token-like input consumes capacity, so whoever controls a session's input can make it fail closed.
   Sessions are per conversation, so the effect stays within that conversation.
 - Tokens differ between sessions, so the same CPF cannot be linked across conversations through tokens;

@@ -25,9 +25,18 @@ const maxTokenAttempts = 8
 // and only tokens the session issued are restored.
 //
 // A session is a trust scope: everything it has tokenized can be restored into any text passed to its
-// Restore methods, so use one session per conversation or request, never one shared across users. A
-// Session is safe for concurrent use by multiple goroutines.
+// Restore methods, whoever wrote that text, so use one session per conversation or request, never one
+// shared across users. Random ids protect against collisions and guessing, not against someone who repeats
+// a token they saw; see docs/spec/v0.1.md.
+//
+// Use Redactor.NewSession to create a Session; the zero value is not usable. A Session is safe for
+// concurrent use by multiple goroutines.
 type Session struct {
+	// Behind a pointer so that formatting a dereferenced Session, as in %+v, cannot print its contents.
+	*sessionState
+}
+
+type sessionState struct {
 	r    *Redactor
 	fill func([]byte) error // random source; crypto/rand outside tests
 
@@ -44,13 +53,13 @@ type valueKey struct {
 
 // NewSession returns an empty Session that uses r's detection settings and capacity.
 func (r *Redactor) NewSession() *Session {
-	return &Session{
+	return &Session{&sessionState{
 		r:        r,
 		fill:     cryptoFill,
 		tokens:   make(map[valueKey]string),
 		values:   make(map[string]string),
 		reserved: make(map[string]struct{}),
-	}
+	}}
 }
 
 func cryptoFill(b []byte) error {

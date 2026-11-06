@@ -246,3 +246,23 @@ An independent review (a separate agent, read-only, with reproductions) ran befo
   Other escapes are not covered: `\u00a0` before a value and `\/` inside a CNPJ, which JSON allows (RFC 8259
   §7, accessed 2026-11-06), stay undetected; JSON-aware redaction is planned for v0.2.
 - A false positive needs a path such as `C:\new…` whose remainder is a whole candidate with valid check digits.
+
+### D-028 Review of the reversible tokens
+
+Reviewed the grammar, collisions, look-alikes, isolation, forgery, mutation, concurrency and streaming against
+the code, with new tests and mutation checks.
+
+- **Held up:** byte-for-byte matching (`TestNoSingleByteEditOfATokenRestores` tries every single-byte edit),
+  reservation including look-alikes and new values in one call, isolation by issued set even when two sessions
+  draw the same id, re-draws on collision, bounded streaming, restoration without re-scanning, and concurrent
+  issuing with streams (`TestConcurrentRedactAndStreams`, with ids from a small space).
+- **Fixed:** `%+v` of a dereferenced `Session` printed its values, against spec §12.7, so the state now sits
+  behind a pointer; `RestoreWriter` ignored short writes that came without an error.
+- **Stated plainly:** the docs said what the mechanism does, and readers could take that as more than it is.
+  Spec §12.8 now separates accidents from adversaries: nothing protects against someone who repeats a valid
+  token, against a model swapping two valid tokens, or against a restored value steered into a link or tool
+  call. Tests pin the limits down. The practical advice follows from it: restore only what the reader may see,
+  and keep data they must not see out of that session.
+- **Left as is:** `Session.Redact` builds its output while holding the write lock. A session belongs to one
+  conversation, so contention is low and the change has no measured benefit yet.
+- **Token grammar stays provisional** until the fidelity harness runs against real models (D-029).

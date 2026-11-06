@@ -67,7 +67,7 @@ func parseToken[T string | []byte](b T) (int, tokenStatus) {
 	return 0, tokenNone
 }
 
-// tokenLiterals returns the distinct well-formed tokens that occur in s.
+// tokenLiterals returns the well-formed tokens that occur in s, in order, with repetitions.
 func tokenLiterals(s string) []string {
 	var out []string
 	for i := 0; i < len(s); {

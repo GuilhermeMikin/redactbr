@@ -45,8 +45,9 @@ The project is pre-alpha and has no releases yet. Only the latest `main` branch 
   digits, invisible characters, numbers in words), unformatted values without a keyword under the
   `Balanced` policy, false positives under `Strict`, entities that are not implemented. Please report
   these as regular issues; they are detection-quality improvements.
-- What the threat model (specification, §16) excludes: deliberate exfiltration by a malicious user,
-  personal data in images, PDFs or audio, names and addresses, prompt injection in general (a model
-  repeating the tokens it saw), a compromised process, memory inspection and side channels.
+- What the threat model (specification, §16 and §12.8) excludes: deliberate exfiltration by a malicious
+  user, personal data in images, PDFs or audio, names and addresses, prompt injection in general (a model
+  repeating the tokens it saw), a user or model repeating a valid token, a restored value steered to a link
+  or tool call, a compromised process, memory inspection and side channels.
 - Misuse that the documentation warns against, such as sharing one session across users.
 - Vulnerabilities in the Go toolchain or standard library; report those to the Go project.

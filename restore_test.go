@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 )
+
+var _ io.WriteCloser = (*RestoreWriter)(nil)
 
 // streamSession returns a session with two known tokens: <CPF_k7q2xm9pb3> for 123.456.789-09 and
 // <EMAIL_0000000000> for ana@example.com.
@@ -165,6 +168,37 @@ func TestRestoreWriterErrors(t *testing.T) {
 	}
 	if err := w.Close(); err != nil {
 		t.Errorf("a second Close returned %v", err)
+	}
+}
+
+type shortWriter struct{}
+
+func (shortWriter) Write(p []byte) (int, error) { return len(p) / 2, nil }
+
+func TestRestoreWriterReportsShortWrites(t *testing.T) {
+	w := streamSession(t).RestoreWriter(shortWriter{})
+	if _, err := w.Write([]byte("hello")); !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("Write returned %v, want io.ErrShortWrite", err)
+	}
+	if _, err := w.Write([]byte("again")); !errors.Is(err, io.ErrShortWrite) {
+		t.Errorf("a short write is not sticky: %v", err)
+	}
+}
+
+func TestRestoreWriterLeavesReservedAndForeignTokens(t *testing.T) {
+	s := streamSession(t)
+	foreign := mustRedact(t, newTestRedactor(t).NewSession(), "987.654.321-00")
+	mustRedact(t, s, "<CPF_aaaaaaaaaa>")
+	in := "<CPF_aaaaaaaaaa> " + foreign + " <CPF_k7q2xm9pb3>"
+	want := "<CPF_aaaaaaaaaa> " + foreign + " 123.456.789-09"
+	for size := 1; size <= len(in); size++ {
+		var chunks []string
+		for i := 0; i < len(in); i += size {
+			chunks = append(chunks, in[i:min(i+size, len(in))])
+		}
+		if got := writeChunks(t, s, chunks...); got != want {
+			t.Fatalf("chunks of %d bytes: got %q, want %q", size, got, want)
+		}
 	}
 }
 

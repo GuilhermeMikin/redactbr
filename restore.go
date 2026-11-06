@@ -75,7 +75,10 @@ func (rw *RestoreWriter) flush() error {
 	if len(rw.out) == 0 {
 		return nil
 	}
-	_, err := rw.w.Write(rw.out)
+	n, err := rw.w.Write(rw.out)
+	if err == nil && n < len(rw.out) {
+		err = io.ErrShortWrite
+	}
 	clear(rw.out) // the buffer is reused; do not keep restored values in it
 	if err != nil {
 		rw.err = err

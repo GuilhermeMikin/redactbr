@@ -49,8 +49,11 @@
 // The same value keeps the same token for the lifetime of the session. Only tokens the session issued
 // are restored; anything else, including tokens of other sessions and modified tokens, is left as it is.
 // Token-like text that reaches Session.Redact before the session issued it is reserved and never issued,
-// so a user who writes something that looks like a token cannot make it restorable. A session is a trust
-// scope: use one per conversation, never one shared across users.
+// so a user who writes something that looks like a token cannot make it restorable.
+//
+// That protects against accidents and guessing, not against someone repeating a token they saw: a valid
+// token is restored whoever wrote it, including a model told to repeat it. A session is a trust scope: use
+// one per conversation, never one shared across users, and restore only what the reader may see.
 //
 // # Streaming
 //

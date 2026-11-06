@@ -41,3 +41,7 @@ Found during development and fixed before any release:
   (`"lista:\n123.456.789-09"`), were not detected, even formatted: the letter of the escape glued to them.
 - In a list after one keyword (`CPFs: a, b, c, d`), values past the 32-byte window were not redacted.
 - `12345678909 é meu CPF` was not redacted: only a keyword before a value counted.
+- `fmt.Sprintf("%+v", *session)`, on a dereferenced `Session`, printed its values; a `Session` now holds its
+  state behind a pointer.
+- `RestoreWriter` treated a short write without an error from the underlying writer as a success, which lost
+  text silently; it now returns `io.ErrShortWrite`.

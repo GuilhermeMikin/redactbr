@@ -83,7 +83,9 @@ releases.
 - **Token safety** ([ADR-0004](docs/adr/0004-reversible-token-session-safety.md)): only tokens issued by a
   session are restored by that session; token-like text that reached the session as input before the
   session issued it never gains restoration authority; unknown, modified or foreign tokens are left
-  verbatim; sessions never restore each other's tokens; randomness comes from `crypto/rand`.
+  verbatim; sessions never restore each other's tokens; randomness comes from `crypto/rand`. These rules
+  cover accidents and guessing. A valid token is a bearer reference, and someone repeating one is not
+  protected against (spec §12.8); never document it as if it were.
 - **Bounded work:** scanning is linear in the input; streaming restoration buffers at most one token's
   length; sessions have a capacity limit and store copies (`strings.Clone`), never substrings that would
   keep whole inputs alive.
