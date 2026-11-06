@@ -280,3 +280,22 @@ the code, with new tests and mutation checks.
   gets the default anyway. No fallback model is configured, so that a run measures the model it names.
 - A run is capped (`-max-requests`), plain HTTP is refused except on localhost, redirects are not followed (a
   custom key header would follow them), and the key appears in no report.
+
+### D-030 `slog` handler in v0.1
+
+- D-019 deferred it for lack of time, not because of doubts. It took about 100 lines plus tests, so it went in.
+- **The name of a field is context for its value.** The obvious handler redacts each string on its own, and then
+  `slog.String("cpf", "12345678909")`, the way a value most often reaches a log, has no keyword next to it and
+  stays in the clear. Values are therefore judged as if they followed `name=`. Numbers are checked for the same
+  reason: `slog.Int64("cpf", 12345678909)`.
+- **Other values become redacted text.** The alternative, leaving a struct alone when its text has no match, is
+  not safe: a JSON handler marshals fields behind pointers that `%+v` shows only as addresses. Failing closed
+  costs structure in the log, and the spec says so.
+- **Only the field's own name counts**, not the message or other attributes. That leaves `tipo=cpf doc=…` under
+  Balanced; tying attributes together would need to buffer and guess. Strict covers callers who need it.
+- **A method on `Redactor`, in the root package,** rather than a subpackage. Importing `log/slog` adds 258 KB (14%)
+  to a minimal stripped binary that does not use it, measured on the development machine, and nothing to one that
+  already does. A subpackage would save that but would need another exported method for the field logic, on top
+  of a new package. Reversible until `v0.1.0`.
+- Conformance is checked with `testing/slogtest`. Measured in `BenchmarkSlogHandler` against
+  `BenchmarkSlogBaseline`.

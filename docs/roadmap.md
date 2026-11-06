@@ -20,7 +20,7 @@ Goal: a small, usable, safe library that is convincing on its own.
 | Streaming restoration (`RestoreWriter`, split tokens, bounded buffer) | done |
 | Unit, fuzz, race, differential (oracle) tests; benchmarks; runnable examples; CI | done |
 | Harness for token fidelity with real models | done; no real model measured yet, which needs the owner's authorization |
-| `slog.Handler` that redacts log records | deferred (cut for this release candidate; see decisions log D-019) |
+| `slog.Handler` that redacts log records | done (decisions log D-030) |
 | `mask` and keyed (HMAC) replacement strategies | not planned for v0.1: would widen the API before there is demand |
 | Review of the API, README and security model before the first public release | pending |
 
@@ -59,7 +59,7 @@ Integrations live in separate packages or modules so the core stays standard-lib
   restoration).
 - MCP integration (tool inputs and outputs).
 - Self-hosted sidecar/proxy.
-- Observability integrations (`slog` first).
+- Observability integrations beyond the `slog` handler.
 - A fair, reproducible external benchmark suite against other tools, with published methodology.
 
 ## Future / exploratory

@@ -45,6 +45,7 @@ vuln:
 examples:
 	$(GO) run ./examples/basic
 	$(GO) run ./examples/llm-stream
+	$(GO) run ./examples/slog
 
 # Runs the token fidelity harness offline, against simulated models. It sends nothing; see docs/token-fidelity.md.
 fidelity:

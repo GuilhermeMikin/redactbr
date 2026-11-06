@@ -8,8 +8,8 @@ the project's rules. Do not copy these rules into other files; link to this one.
 
 RedactBR is a Go library that redacts Brazilian PII (CPF, numeric and alphanumeric CNPJ) and email
 addresses in-process, for Go applications and LLM pipelines. It offers typed replacement (`<CPF>`),
-reversible per-session tokens (`<CPF_k7q2xm9pb3>`) and streaming restoration of those tokens in model
-output. The core uses the Go standard library only. The project is **pre-alpha**: the API may change before
+reversible per-session tokens (`<CPF_k7q2xm9pb3>`), streaming restoration of those tokens in model
+output, and a `log/slog` handler. The core uses the Go standard library only. The project is **pre-alpha**: the API may change before
 `v0.1.0`. The behavior contract is [docs/spec/v0.1.md](docs/spec/v0.1.md).
 
 ## Commands
@@ -123,6 +123,7 @@ releases.
 | `scan.go`, `email.go` | Candidate scanning, boundaries, context and the detection policy |
 | `session.go`, `token.go` | Reversible sessions, token grammar and generation |
 | `restore.go` | `RestoreWriter` (streaming restoration) |
+| `slog.go` | `log/slog` handler |
 | `internal/cpf`, `internal/cnpj` | Check-digit validators (no detection policy) |
 | `internal/tokenfidelity` | Harness that measures token round trips with LLMs, offline by default |
 | `examples/` | Runnable programs; CI runs them |

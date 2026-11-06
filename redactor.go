@@ -149,7 +149,8 @@ func (r *Redactor) capacity() int {
 	return r.maxValues
 }
 
-// Find returns the values in text that the Redactor would redact, in order and without overlaps.
+// Find reports where the values that the Redactor would redact are in text, in order and without overlaps. A
+// Match has the entity and the byte offsets, never the value.
 func (r *Redactor) Find(text string) []Match {
 	return r.find(text)
 }
@@ -161,6 +162,10 @@ func (r *Redactor) Redact(text string) string {
 	if len(ms) == 0 {
 		return text
 	}
+	return replaceMatches(text, ms)
+}
+
+func replaceMatches(text string, ms []Match) string {
 	var b strings.Builder
 	b.Grow(len(text))
 	last := 0

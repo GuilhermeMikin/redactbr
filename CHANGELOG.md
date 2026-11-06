@@ -22,8 +22,10 @@ notice.
   errors); `Session.Restore` restores only tokens the session issued.
 - Streaming restoration with `Session.RestoreWriter`, which restores tokens split across writes while
   holding back at most 17 bytes.
-- Runnable examples (`examples/basic`, `examples/llm-stream`), godoc examples, benchmarks, fuzz targets and
-  a regexp-based oracle test.
+- A `log/slog` handler, `Redactor.NewSlogHandler`, that redacts messages, keys and values. The name of a field
+  counts as context for its value, and numbers are checked too.
+- Runnable examples (`examples/basic`, `examples/llm-stream`, `examples/slog`), godoc examples, benchmarks, fuzz
+  targets and a regexp-based oracle test.
 - Specification, ADRs, roadmap, prior-art notes, security policy, contribution guide (DCO) and CI.
 - A harness that measures whether LLMs copy tokens faithfully (`internal/tokenfidelity`,
   `docs/token-fidelity.md`). It runs offline by default; no real model has been measured yet.

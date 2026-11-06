@@ -58,6 +58,7 @@ jobs:
         run: |
           go run ./examples/basic
           go run ./examples/llm-stream
+          go run ./examples/slog
 
       # One iteration each: keeps the benchmarks compiling and running; timings on shared runners are noise.
       - name: Benchmarks (smoke)

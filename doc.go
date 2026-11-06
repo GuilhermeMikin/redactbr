@@ -68,6 +68,16 @@
 //	}
 //	err := w.Close() // writes any held-back bytes
 //
+// # Logs
+//
+// Redactor.NewSlogHandler wraps a log/slog handler so that records are redacted before they are written:
+//
+//	logger := slog.New(r.NewSlogHandler(slog.NewJSONHandler(os.Stderr, nil)))
+//	logger.Info("signup", "cpf", "12345678909") // logs "cpf":"<CPF>"
+//
+// The name of a field is context for its value. Values of other types, such as errors and structs, are logged
+// as redacted text.
+//
 // # Concurrency and errors
 //
 // Redactor and Session are safe for concurrent use; a RestoreWriter is not. Redaction of a string by a
