@@ -57,7 +57,7 @@ go run ./internal/tokenfidelity -provider anthropic -model MODEL_ID -repeats 12 
 
 ### What is missing to run it for real
 
-1. The owner's authorization, in the session that runs it.
+1. The maintainer's authorization for that run.
 2. A provider key in the environment, or a local server.
 3. The list of models to measure.
 4. A budget. The plan prints the number of requests and the ceiling on output tokens (requests × `-max-tokens`).

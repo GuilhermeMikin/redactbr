@@ -137,7 +137,7 @@ Dates are when the decision was recorded. "Accessed" dates are when a source was
 
 ### D-019 slog deferred (superseded by D-030)
 
-- The `slog.Handler` was the first item on the cut list. It is deferred to keep this session's effort on
+- The `slog.Handler` was the first item on the cut list. It is deferred to keep the bootstrap's effort on
   the core guarantees; it goes into v0.3 integrations ("observability, slog first").
 
 ### D-020 Name check
@@ -274,7 +274,7 @@ the code, with new tests and mutation checks.
 - `internal/tokenfidelity` measures token round trips with LLMs. It is `package main` under `internal/` because
   it is a development tool, not API or a CLI (the CLI is planned for v0.3), and because `go test ./...` then
   covers it. Details and the decision rule for the grammar are in `docs/token-fidelity.md`.
-- **No real model was measured in this session.** No credentials were used and no paid call was made; all results
+- **No real model had been measured as of 2026-11-06.** No credentials were used and no paid call was made; all results
   so far come from simulated models and local test servers, which test the harness and not the models. A review
   agent did reach provider endpoints without credentials (D-034).
 - Provider calls use `net/http` rather than official SDKs, because ADR-0002 keeps the module free of
@@ -359,7 +359,7 @@ A separate agent checked the documents against the code and the sources before t
 
 ### D-034 Corrections from an independent review of the code
 
-A separate agent reviewed the changes of this session, with reproductions and about 120 hand-written mutants.
+A separate agent reviewed the changes made on 2026-11-06, with reproductions and about 120 hand-written mutants.
 
 - **Requests that left the machine.** While mutation-testing the harness in a scratch copy, the agent removed its key
   check and ran its tests with the network open. Those tests then attempted 72 requests each to `api.anthropic.com`
