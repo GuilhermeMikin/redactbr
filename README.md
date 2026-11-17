@@ -17,6 +17,22 @@ go get github.com/GuilhermeMikin/redactbr
 > **Status: pre-alpha.** The API may change before `v0.1.0`; there are no releases yet. Requires Go 1.26
 > or newer (CI tests Go 1.26 and 1.27).
 
+## Design highlights
+
+- **Fail closed.** When a session cannot redact, it returns an error and an empty string, never the original
+  text; a configuration that would detect nothing is rejected.
+- **Standard library only.** No module dependencies; a hand-written linear scanner instead of regular
+  expressions, with check digits validated against the Receita Federal's published algorithms and vectors.
+- **Reversible, streaming-safe tokens.** Session tokens use 50 random bits from `crypto/rand`, only tokens the
+  session issued are restored, and `RestoreWriter` restores tokens split across chunks while holding back at
+  most 17 bytes.
+- **No values in diagnostics.** `Match`, errors, `Session` and `RestoreWriter` print entities, offsets and
+  counts, never the data.
+- **Tested hard.** 99% statement coverage in the main package, 7 fuzz targets, a regexp-based oracle, the race
+  detector and govulncheck in CI.
+- **Cheap on clean text.** About 500 MB/s with zero allocations on 10 KB of text without personal data
+  ([benchmarks](#tests-and-benchmarks)).
+
 ## Example
 
 ```go
@@ -238,8 +254,18 @@ go test -run='^$' -bench=. -benchmem ./...
 ```
 
 Benchmarks cover single values, 1 KB and 10 KB mixed text, text without personal data, a worst case for the email
-scanner, tokenization, (streaming) restoration and the `slog` handler. Numbers depend on the machine; run them on
-yours.
+scanner, tokenization, (streaming) restoration and the `slog` handler. A sample, measured with Go 1.26.0 on an
+AMD Ryzen 7 4800H (linux/amd64), median of three runs:
+
+| Benchmark | Input | Time/op | Throughput | Allocs/op |
+|---|---|---|---|---|
+| `RedactNoPII10KB` | 10 KB without personal data | 19.6 µs | 526 MB/s | 0 |
+| `Mixed10KB` | 10 KB, half the lines with a CPF, a CNPJ and an email | 89 µs | 115 MB/s | 15 |
+| `RedactCPF` | one formatted CPF in a short sentence | 515 ns | 72 MB/s | 2 |
+| `Tokenize` | 1 KB mixed text, new session | 17 µs | 61 MB/s | 44 |
+| `RestoreStreaming` | 10 KB answer written in 16-byte chunks | 46.5 µs | 219 MB/s | 6 |
+
+Numbers depend on the machine; run them on yours.
 
 ## Roadmap
 
