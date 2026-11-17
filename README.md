@@ -14,7 +14,7 @@ standard library only.
 go get github.com/GuilhermeMikin/redactbr
 ```
 
-> **Status: pre-alpha.** The API may change before `v0.1.0`; there are no releases yet. Requires Go 1.26
+> **Status: pre-alpha.** The API may change before `v0.1.0`; `v0.0.1` is a preview release. Requires Go 1.26
 > or newer (CI tests Go 1.26 and 1.27).
 
 ## Design highlights

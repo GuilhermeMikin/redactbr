@@ -7,6 +7,11 @@ notice.
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-11-17
+
+First public preview. The API and the token format may still change before `v0.1.0`, which waits on
+measuring token fidelity with real models ([roadmap](docs/roadmap.md)).
+
 ### Added
 
 - Detection of CPF (formatted and unformatted), numeric CNPJ and alphanumeric CNPJ (IN RFB 2.229/2024),
@@ -58,3 +63,6 @@ Found during development and fixed before any release:
   a backslash cut off from its keyword.
 - `RestoreWriter` treated a short write without an error from the underlying writer as a success, which lost
   text silently; it now returns `io.ErrShortWrite`.
+
+[Unreleased]: https://github.com/GuilhermeMikin/redactbr/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/GuilhermeMikin/redactbr/releases/tag/v0.0.1

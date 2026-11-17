@@ -20,7 +20,7 @@ wish.
 
 ## Supported versions
 
-The project is pre-alpha and has no releases yet. Only the latest `main` branch is supported.
+The project is pre-alpha. Only the latest release (`v0.0.1`) and the `main` branch are supported.
 
 ## In scope
 
