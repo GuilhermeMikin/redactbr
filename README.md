@@ -1,39 +1,38 @@
 # RedactBR
 
 [![CI](https://github.com/GuilhermeMikin/redactbr/actions/workflows/ci.yml/badge.svg)](https://github.com/GuilhermeMikin/redactbr/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/GuilhermeMikin/redactbr.svg)](https://pkg.go.dev/github.com/GuilhermeMikin/redactbr)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **Brazilian PII redaction for Go applications and LLM pipelines.**
 
-Local, reversible and dependency-free: RedactBR finds CPF, CNPJ (numeric and the new alphanumeric format) and
-email addresses in text, inside your process, and replaces them with a typed label or with a session token that
-it can restore later. Restoration also works on an LLM answer that arrives in chunks. The core uses the Go
-standard library only.
-
-```bash
-go get github.com/GuilhermeMikin/redactbr
-```
+RedactBR finds CPF, CNPJ (numeric and the new alphanumeric format) and email addresses in text, inside your
+process. It replaces them with a typed label, or with a session token that it can restore later, even in an LLM
+answer that arrives in chunks. The core uses only the Go standard library.
 
 > **Status: pre-alpha.** The API may change before `v0.1.0`; `v0.0.1` is a preview release. Requires Go 1.26
 > or newer (CI tests Go 1.26 and 1.27).
 
-## Design highlights
+## Contents
 
-- **Fail closed.** When a session cannot redact, it returns an error and an empty string, never the original
-  text; a configuration that would detect nothing is rejected.
-- **Standard library only.** No module dependencies; a hand-written linear scanner instead of regular
-  expressions, with check digits validated against the Receita Federal's published algorithms and vectors.
-- **Reversible, streaming-safe tokens.** Session tokens use 50 random bits from `crypto/rand`, only tokens the
-  session issued are restored, and `RestoreWriter` restores tokens split across chunks while holding back at
-  most 17 bytes.
-- **No values in diagnostics.** `Match`, errors, `Session` and `RestoreWriter` print entities, offsets and
-  counts, never the data.
-- **Tested hard.** 99% statement coverage in the main package, 7 fuzz targets, a regexp-based oracle, the race
-  detector and govulncheck in CI.
-- **Cheap on clean text.** About 500 MB/s with zero allocations on 10 KB of text without personal data
-  ([benchmarks](#tests-and-benchmarks)).
+- [Quick start](#quick-start)
+- [Why RedactBR](#why-redactbr)
+- [What it detects](#what-it-detects)
+- [API at a glance](#api-at-a-glance)
+- [LLM pipelines](#llm-pipelines)
+- [Security model](#security-model)
+- [Limitations](#limitations)
+- [Technical decisions](#technical-decisions)
+- [Tests and benchmarks](#tests-and-benchmarks)
+- [Roadmap](#roadmap)
+- [Contributing and security](#contributing-and-security)
+- [License](#license)
 
-## Example
+## Quick start
+
+```bash
+go get github.com/GuilhermeMikin/redactbr
+```
 
 ```go
 package main
@@ -69,11 +68,32 @@ func main() {
 }
 ```
 
-Runnable programs: [`examples/basic`](examples/basic) (policies, typed replacement, a reversible round
-trip), [`examples/llm-stream`](examples/llm-stream) (a simulated streamed LLM answer with tokens split
-across chunks) and [`examples/slog`](examples/slog) (redacted logs). None needs an API key or a network.
+Runnable programs, none of which needs an API key or a network:
 
-## What works today
+- [`examples/basic`](examples/basic): policies, typed replacement and a reversible round trip.
+- [`examples/llm-stream`](examples/llm-stream): a simulated streamed LLM answer with tokens split across chunks.
+- [`examples/slog`](examples/slog): redacted logs.
+
+## Why RedactBR
+
+- **Brazil first, not an add-on.** Check digits follow the Receita Federal's published algorithms and reference
+  vectors, including the alphanumeric CNPJ assigned to new registrations from July 2026. The policy for
+  unformatted Brazilian identifiers is explicit and tested.
+- **In-process, standard library only.** An external PII API adds latency, an operational dependency and
+  another system that receives the data you are trying to protect. Those can be the right trade-offs; RedactBR
+  gives Go services the option not to make them, with no module dependencies.
+- **Reversible, streaming-safe tokens.** Models can refer to "the customer's CPF" while the user still gets the
+  real value back. Tokens use 50 random bits from `crypto/rand`, only tokens the session issued are restored,
+  and `RestoreWriter` restores tokens split across chunks while holding back at most 17 bytes.
+- **Safe by default.** It fails closed and never prints values in errors or diagnostics
+  ([security model](#security-model)).
+- **Tested hard, cheap on clean text.** 99% statement coverage in the main package, 8 fuzz targets, a
+  regexp-based oracle, the race detector and govulncheck in CI. About 500 MB/s with zero allocations on 10 KB
+  of text without personal data ([benchmarks](#tests-and-benchmarks)).
+
+Several projects already cover parts of this, in Go and other languages; see [prior art](docs/prior-art.md).
+
+## What it detects
 
 | Entity | Recognized forms | Validation | Redacted under the default policy |
 |---|---|---|---|
@@ -85,25 +105,13 @@ across chunks) and [`examples/slog`](examples/slog) (redacted logs). None needs 
 All values in this README are generated test values. The official CNPJ format uses uppercase letters. Detection
 accepts either case, because people type lowercase and it identifies the same company ([spec §8.1](docs/spec/v0.1.md#81-lowercase-alphanumeric-cnpj)).
 
-- **Typed replacement:** `Redactor.Redact` → `<CPF>`, `<CNPJ>`, `<EMAIL>`.
-- **Detection only:** `Redactor.Find` returns entities and byte offsets, never values, so matches are safe
-  to log.
-- **Reversible sessions:** `Session.Redact` → `<CPF_k7q2xm9pb3>`; `Session.Restore` puts the values back.
-- **Streaming restoration:** `Session.RestoreWriter(w)` restores tokens split across writes in a model's answer,
-  holding back at most 17 bytes. This is about **restoring output**: redaction takes whole strings, and redacting
-  a stream of input is not implemented.
-- **Logs:** `Redactor.NewSlogHandler(next)` redacts `log/slog` records. The name of a field counts as context, so
-  `slog.String("cpf", "12345678909")` and `slog.Int64("cpf", 1234567890)`, which lost a leading zero, are redacted;
-  errors and structs are logged as redacted text.
-- **Policies:** `Balanced` (default) and `Strict`, below.
-
 ### Formatted vs. unformatted values
 
-A valid check digit alone is weak evidence: one in a hundred arbitrary 11-digit numbers has valid CPF
-check digits, and LLM and agent traffic is full of order numbers, ids and timestamps. So:
+A valid check digit alone is weak evidence: one in a hundred arbitrary 11-digit numbers has valid CPF check
+digits, and LLM and agent traffic is full of order numbers, ids and timestamps. So:
 
-- **Formatted** values (`123.456.789-09`, `11.223.344/5566-13`) are redacted whenever their check digits
-  are valid and they are not glued to letters or digits (`CPF123.456.789-09` is not detected;
+- **Formatted** values (`123.456.789-09`, `11.223.344/5566-13`) are redacted whenever their check digits are
+  valid and they are not glued to letters or digits (`CPF123.456.789-09` is not detected;
   `CPF nº123.456.789-09` is).
 - **Unformatted** values (`12345678909`), and the partially formatted `123456789-09`, are redacted under the
   default `Balanced` policy **only with context**. A bare value without it is **not** redacted by default.
@@ -124,23 +132,27 @@ strict, err := redactbr.New(redactbr.WithPolicy(redactbr.Strict))
 ```
 
 Values with invalid check digits are never redacted, and nothing is detected only because it has the right
-length. The exact rules, including boundaries (`x12345678909` and `0.12345678909` are not candidates), are
-in the [specification](docs/spec/v0.1.md).
+length. The exact rules, including boundaries (`x12345678909` and `0.12345678909` are not candidates), are in
+the [specification](docs/spec/v0.1.md).
 
-## Why
+## API at a glance
 
-- **Brazil is a first-class target, not an add-on.** The detectors follow the Receita Federal's published
-  algorithms and reference vectors, including the alphanumeric CNPJ that the Receita Federal assigns to
-  new registrations from July 2026, and the policy for unformatted Brazilian identifiers is explicit and
-  tested.
-- **Redaction should be able to happen in-process.** An external PII API adds latency, an operational
-  dependency and another system that receives the data you are trying to protect. Those can be the right
-  trade-offs; RedactBR gives Go services the option not to make them.
-- **LLM traffic needs reversibility.** Models need to refer to "the customer's CPF" and answers need the
-  real value back for the user. Tokens are designed to be copied, and only tokens the session issued are ever
-  restored. How faithfully real models copy them has not been measured yet ([harness](docs/token-fidelity.md)).
+| Call | What it does |
+|---|---|
+| `Redactor.Redact` | Typed, irreversible replacement: `<CPF>`, `<CNPJ>`, `<EMAIL>` |
+| `Redactor.Find` | Entities and byte offsets, never values, so matches are safe to log |
+| `Session.Redact` / `Session.Restore` | Reversible tokens (`<CPF_k7q2xm9pb3>`) and their restoration |
+| `Session.RestoreWriter(w)` | Restores tokens split across writes in a model's answer, holding back at most 17 bytes |
+| `Redactor.NewSlogHandler(next)` | Redacts `log/slog` records |
+| `WithPolicy`, `WithEntities`, `WithMaxSessionValues` | Options for `New`: policy, entities and session capacity |
 
-Several projects already cover parts of this, in Go and other languages; see [prior art](docs/prior-art.md).
+- `RestoreWriter` is about **restoring output**: redaction takes whole strings, and redacting a stream of input
+  is not implemented.
+- In the `slog` handler, the name of a field counts as context, so `slog.String("cpf", "12345678909")` and
+  `slog.Int64("cpf", 1234567890)`, which lost a leading zero, are redacted. Errors and structs are logged as
+  redacted text.
+
+Full reference on [pkg.go.dev](https://pkg.go.dev/github.com/GuilhermeMikin/redactbr).
 
 ## LLM pipelines
 
@@ -150,8 +162,8 @@ user text ──Session.Redact──► prompt with tokens ──► LLM provide
 user ◄──RestoreWriter (chunk by chunk)── streamed answer ◄┘
 ```
 
-- Use **one session per conversation** and keep it for the conversation's lifetime: the same value keeps
-  the same token across turns, which keeps prompts stable.
+- Use **one session per conversation** and keep it for the conversation's lifetime: the same value keeps the
+  same token across turns, which keeps prompts stable.
 - Send **all** model-bound text through `Session.Redact`, including history and tool results, as whole strings.
   `Session.Redact` does not take a stream, so a value split across two calls is not detected.
 - **Restore only what the reader of the answer may see.** A session restores everything it tokenized, so data the
@@ -165,7 +177,7 @@ user ◄──RestoreWriter (chunk by chunk)── streamed answer ◄┘
   which 50 random bits make negligible. Consider telling the model, in the system prompt, to copy placeholders
   such as `<CPF_k7q2xm9pb3>` exactly.
 
-## Security
+## Security model
 
 RedactBR is a data-minimization control for well-intentioned applications. It helps against accidental
 disclosure of personal data to LLM providers, logs and other third parties, and it lets answers reuse
@@ -176,15 +188,14 @@ injection in general, or a compromised process. The full threat model is in the
 
 Guarantees you can rely on (covered by tests, fuzzing or both, except the linear scan, which benchmarks track):
 
-- **Fail closed.** Operations that can fail return an error and an empty result, never the unredacted
-  input. A configuration that would detect nothing is rejected, and a zero `Redactor` detects everything.
+- **Fail closed.** Operations that can fail return an error and an empty result, never the unredacted input. A
+  configuration that would detect nothing is rejected, and a zero `Redactor` detects everything.
 - **Against accidents and guessing.** A session restores only tokens it issued, matched byte for byte. Tokens from
   other sessions, forged or modified tokens, and token-like text that reached the session as input before it issued
-  that token are left verbatim. Ids are 50 random bits from `crypto/rand`.
+  that token are left verbatim.
 - **Bounded work.** Detection is a linear scan plus a sort of the matches; streaming restoration holds at most
-  17 bytes;
-  sessions have a capacity (`WithMaxSessionValues`, default 10,000) and store copies of values, never the
-  inputs they came from.
+  17 bytes; sessions have a capacity (`WithMaxSessionValues`, default 10,000) and store copies of values, never
+  the inputs they came from.
 - **No values in diagnostics.** Errors, `Match`, `Session` and `RestoreWriter` print entities, offsets and
   counts, never values.
 - **Concurrency.** `Redactor`, `Session` and the `slog` handler are safe for concurrent use (tested with `-race`);
@@ -200,29 +211,27 @@ What the tokens do **not** protect against ([spec §12.8](docs/spec/v0.1.md#128-
   model output that now contains real data.
 - **A model mixing tokens up.** Swapping two customers' tokens restores both faithfully, in the wrong places.
 
-Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
-
 RedactBR can support LGPD data-minimization measures; using it does not make a system compliant.
 
 ## Limitations
 
-- Unformatted values without a nearby keyword are not redacted under the default policy (see above).
-- Not recognized: digits separated by spaces or partial punctuation (`123 456 789 09`, `123.456789-09`),
-  values glued to a word (`CPF123.456.789-09`), full-width digits, values with invisible characters
-  inside, percent-encoded text (`cpf%3D12345678909`), numbers in words. JSON escapes other than `\n`, `\r` and `\t`
-  hide a value even under `Strict` (`11.223.344\/5566-13`, a value right after `\f` or `\u00a0`).
-- Email: no quoted local parts, IP literals or single-label domains. Typed or tokenized, an email loses
-  its domain too.
-- Only CPF, CNPJ and email. Other Brazilian identifiers (CNH, PIS, CNS, título de eleitor, phone numbers,
-  CEP) and payment cards are planned, not implemented.
-- A CPF that lost its leading zeros, as spreadsheets do, is not recognized in text, only in `slog` number fields.
-- Input must be whole strings. Redacting a stream of input, and JSON-aware redaction, are planned.
-- Sessions live in the memory of one process. They do not survive a restart or move between replicas, and a new
-  session does not restore the tokens of an old one.
-- Token survival in real models has not been measured yet; [a harness is ready](docs/token-fidelity.md).
-- The CPF check-digit rule is the one the Receita Federal documents in its e-Financeira manual and has written in
-  a routine that its public CPF page loads. Those are official technical sources; a normative definition is still
-  pending (see the spec).
+- **Coverage:** only CPF, CNPJ and email. Other Brazilian identifiers (CNH, PIS, CNS, título de eleitor, phone
+  numbers, CEP) and payment cards are planned, not implemented.
+- **Not recognized:** digits separated by spaces or partial punctuation (`123 456 789 09`, `123.456789-09`),
+  values glued to a word (`CPF123.456.789-09`), full-width digits, values with invisible characters inside,
+  percent-encoded text (`cpf%3D12345678909`), numbers in words. JSON escapes other than `\n`, `\r` and `\t`
+  hide a value even under `Strict` (`11.223.344\/5566-13`, a value right after `\f` or ` `).
+- **Email:** no quoted local parts, IP literals or single-label domains. Typed or tokenized, an email loses its
+  domain too.
+- **Leading zeros:** a CPF that lost its leading zeros, as spreadsheets do, is not recognized in text, only in
+  `slog` number fields.
+- **Input:** must be whole strings. Redacting a stream of input, and JSON-aware redaction, are planned.
+- **Sessions:** live in the memory of one process. They do not survive a restart or move between replicas, and a
+  new session does not restore the tokens of an old one.
+- **Token fidelity:** how faithfully real models copy tokens has not been measured yet; [a harness is ready](docs/token-fidelity.md).
+- **CPF rule source:** the CPF check-digit rule is the one the Receita Federal documents in its e-Financeira
+  manual and has written in a routine that its public CPF page loads. Those are official technical sources; a
+  normative definition is still pending (see the spec).
 
 ## Technical decisions
 
@@ -253,9 +262,7 @@ make fuzz FUZZTIME=30s         # every fuzz target, 30 s each
 go test -run='^$' -bench=. -benchmem ./...
 ```
 
-Benchmarks cover single values, 1 KB and 10 KB mixed text, text without personal data, a worst case for the email
-scanner, tokenization, (streaming) restoration and the `slog` handler. A sample, measured with Go 1.26.0 on an
-AMD Ryzen 7 4800H (linux/amd64), median of three runs:
+A sample of the benchmarks, measured with Go 1.26.0 on an AMD Ryzen 7 4800H (linux/amd64), median of three runs:
 
 | Benchmark | Input | Time/op | Throughput | Allocs/op |
 |---|---|---|---|---|
@@ -269,21 +276,21 @@ Numbers depend on the machine; run them on yours.
 
 ## Roadmap
 
-- **v0.1** — in progress, pre-alpha: CPF, CNPJ (numeric and alphanumeric), email, typed replacement,
-  sessions, streaming restoration, a `log/slog` handler.
-- **v0.2** — more Brazilian identifiers, payment cards, ambiguity resolution, JSON and tool-call arguments.
-- **v0.3** — CLI, `net/http` and gRPC middleware, OpenAI-compatible, Anthropic and MCP integrations, a
-  sidecar.
+- **v0.1:** in progress. `v0.0.1` ships CPF, CNPJ (numeric and alphanumeric), email, typed replacement,
+  sessions, streaming restoration and a `log/slog` handler. `v0.1.0` waits on measuring token fidelity with
+  real models and freezing the token format.
+- **v0.2:** more Brazilian identifiers, payment cards, ambiguity resolution, JSON and tool-call arguments.
+- **v0.3:** CLI, `net/http` and gRPC middleware, OpenAI-compatible, Anthropic and MCP integrations, a sidecar.
 
 Details in [docs/roadmap.md](docs/roadmap.md).
 
-## Contributing
+## Contributing and security
 
 Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Every commit needs a DCO sign-off
 (`git commit -s`), detectors need an official source, and fixtures must be generated, never collected.
 Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-## Professional support
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
 
 Professional support and consulting may be available through [mikin.ai/contact](https://mikin.ai/contact).
 
