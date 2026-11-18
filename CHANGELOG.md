@@ -1,9 +1,8 @@
 # Changelog
 
 All notable changes to this project are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project will use
-[Semantic Versioning](https://semver.org/) once it has releases. Until `v0.1.0` the API may change without
-notice.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
+[Semantic Versioning](https://semver.org/). Until `v0.1.0` the API may change without notice.
 
 ## [Unreleased]
 
